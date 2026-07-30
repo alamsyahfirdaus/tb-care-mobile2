@@ -1,0 +1,51 @@
+name: apk_tb_care
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  shared_preferences: ^2.5.3
+  url_launcher: ^6.3.1
+  google_fonts: ^6.1.0
+  intl: ^0.20.2
+  cached_network_image: ^3.4.1
+  sqflite: ^2.4.2
+  flutter_local_notifications: ^19.2.1
+  timezone: ^0.10.1
+  permission_handler: ^12.0.0+1
+  fl_chart: ^1.0.0
+  file_picker: ^10.2.0
+  image_picker: ^1.1.2
+  dio: ^5.8.0+1
+  android_alarm_manager_plus: ^4.0.7
+  firebase_database: ^11.3.9
+  firebase_core: ^3.15.1
+  open_file: ^3.5.10
+  workmanager: ^0.8.0
+  device_info_plus: ^11.5.0
+  image: ^4.7.2
+  share_plus: ^12.0.1
+  flutter_linkify: ^6.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: assets/images/ikon_tbcare.png
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
