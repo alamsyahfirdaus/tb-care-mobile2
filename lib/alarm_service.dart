@@ -24,6 +24,7 @@ class AlarmService {
 
     await _checkPermissions();
     await _initNotificationChannels();
+    // ignore: deprecated_member_use
     await Workmanager().initialize(callbackDispatcher, isInDebugMode: true);
   }
 
@@ -270,7 +271,7 @@ void medicationAlarmCallback() async {
 void visitAlarmCallback() async {
   final prefs = await SharedPreferences.getInstance();
   if (prefs.getInt('user_type_id') != 2) return;
-  
+
   final notifications = FlutterLocalNotificationsPlugin();
 
   await notifications.show(

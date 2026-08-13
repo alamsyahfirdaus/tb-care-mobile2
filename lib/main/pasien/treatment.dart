@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
@@ -10,6 +12,7 @@ import 'package:apk_tb_care/connection.dart';
 import 'package:apk_tb_care/values/colors.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:image_picker/image_picker.dart';
 // ignore: depend_on_referenced_packages
@@ -22,52 +25,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:workmanager/workmanager.dart';
-
-// Notification callback for alarm manager
-// @pragma('vm:entry-point')
-// void notificationCallback() async {
-//   try {
-//     final prefs = await SharedPreferences.getInstance();
-//     prefs.setInt('lastNotificationTime', DateTime.now().millisecondsSinceEpoch);
-
-//     final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-//         FlutterLocalNotificationsPlugin();
-
-//     await flutterLocalNotificationsPlugin.initialize(
-//       const InitializationSettings(
-//         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-//       ),
-//     );
-
-//     await flutterLocalNotificationsPlugin.show(
-//       0,
-//       'Reminder Pengobatan',
-//       'Saatnya minum obat! Jangan lupa ya!',
-//       const NotificationDetails(
-//         android: AndroidNotificationDetails(
-//           'reminder_channel',
-//           'Pengingat Harian',
-//           channelDescription:
-//               'Channel untuk pengingat harian seperti minum obat',
-//           importance: Importance.high,
-//           priority: Priority.high,
-//           playSound: true,
-//           enableVibration: true,
-//           sound: UriAndroidNotificationSound(
-//             'content://settings/system/notification_sound',
-//           ),
-//           color: Colors.green,
-//           ledColor: Colors.green,
-//           ledOnMs: 1000,
-//           ledOffMs: 500,
-//         ),
-//       ),
-//     );
-//     log('Daily notification shown at ${DateTime.now()}');
-//   } catch (e) {
-//     log('Error showing notification: $e');
-//   }
-// }
+import 'package:google_fonts/google_fonts.dart';
+import 'package:apk_tb_care/main/login.dart';
 
 @pragma('vm:entry-point')
 void notificationCallback() async {
@@ -84,32 +43,13 @@ void notificationCallback() async {
       ),
     );
 
-    // await flutterLocalNotificationsPlugin.show(
-    //   0,
-    //   'Reminder Pengobatan',
-    //   'Saatnya minum obat! Jangan lupa ya!',
-    //   const NotificationDetails(
-    //     android: AndroidNotificationDetails(
-    //       'reminder_channel_v2', // GANTI CHANNEL ID
-    //       'Pengingat Harian',
-    //       channelDescription: 'Pengingat minum obat harian',
-    //       importance: Importance.max, // WAJIB
-    //       priority: Priority.high,
-    //       playSound: true,
-    //       enableVibration: true,
-    //       visibility: NotificationVisibility.public,
-    //       category: AndroidNotificationCategory.alarm, // 🔥 WAJIB
-    //     ),
-    //   ),
-    // );
-
     await flutterLocalNotificationsPlugin.show(
       0,
       'Reminder Pengobatan',
       'Saatnya minum obat! Jangan lupa ya!',
       const NotificationDetails(
         android: AndroidNotificationDetails(
-          'reminder_channel_alarm', // 🔥 SAMA
+          'reminder_channel_alarm',
           'Alarm Minum Obat',
           importance: Importance.max,
           priority: Priority.high,
@@ -245,8 +185,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
   Map<String, dynamic>? _currentTreatment;
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
-  // ignore: unused_field
-  bool _notifIsActive = false;
   bool _uploadedToday = false;
   bool _isUploading = false;
 
@@ -261,7 +199,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
       if (await _isPatientUser()) {
         await _initializeBackgroundTasks();
       } else {
-        // 🔥 PENTING: pastikan alarm benar-benar mati
         await AndroidAlarmManager.cancel(0);
         await Workmanager().cancelByTag('daily_medication');
         await Workmanager().cancelAll();
@@ -276,20 +213,28 @@ class _TreatmentPageState extends State<TreatmentPage> {
     await Workmanager().initialize(callbackDispatcher, isInDebugMode: true);
     await _initNotifications();
     _checkMissedNotifications();
-    // _getSharedPreferences();
   }
 
   Future<bool> _isPatientUser() async {
     final prefs = await SharedPreferences.getInstance();
     final userType = prefs.getInt('user_type_id');
-    return userType == 2; // 2 = PASIEN
+    return userType == 2;
   }
 
   bool _alreadyUploadedToday(List<dynamic> history) {
-    if (history.isEmpty) return false;
+    if (history.isEmpty) {
+      return false;
+    }
 
     final latest = history.first;
-    final submittedAt = DateTime.parse(latest['submitted_at']);
+    if (latest == null || latest['submitted_at'] == null) {
+      return false;
+    }
+    final submittedAt = DateTime.tryParse(latest['submitted_at']);
+    if (submittedAt == null) {
+      return false;
+    }
+
     final today = DateTime.now();
 
     return submittedAt.year == today.year &&
@@ -298,11 +243,11 @@ class _TreatmentPageState extends State<TreatmentPage> {
   }
 
   Future<void> _refreshTreatmentPage() async {
-    setState(() {
-      _patientFuture = _fetchPatientData();
-    });
-
-    // Optional delay biar animasi halus
+    if (mounted) {
+      setState(() {
+        _patientFuture = _fetchPatientData();
+      });
+    }
     await Future.delayed(const Duration(milliseconds: 500));
   }
 
@@ -320,7 +265,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
     final prefs = await SharedPreferences.getInstance();
     final lastTime = prefs.getString(_lastMedicationTimeKey);
 
-    // ⏱ Pertama kali set alarm
     if (lastTime == null) {
       debugPrint('🆕 First alarm set from API: $apiTime');
       await _scheduleFromApiTime(apiTime);
@@ -328,18 +272,13 @@ class _TreatmentPageState extends State<TreatmentPage> {
       return;
     }
 
-    // 🔁 Jika jam API berubah → reschedule
     if (lastTime != apiTime) {
       debugPrint('🔁 Alarm time changed: $lastTime → $apiTime');
 
-      // ❌ HAPUS ALARM LAMA
       await AndroidAlarmManager.cancel(0);
       await Workmanager().cancelByTag('daily_medication');
 
-      // 🔄 SET ALARM BARU
       await _scheduleFromApiTime(apiTime);
-
-      // 💾 SIMPAN JAM BARU
       await prefs.setString(_lastMedicationTimeKey, apiTime);
     } else {
       debugPrint('✅ Alarm time unchanged ($apiTime)');
@@ -348,8 +287,11 @@ class _TreatmentPageState extends State<TreatmentPage> {
 
   Future<void> _scheduleFromApiTime(String timeString) async {
     final parts = timeString.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = int.parse(parts[1]);
+    if (parts.length < 2) {
+      return;
+    }
+    final hour = int.tryParse(parts[0]) ?? 12;
+    final minute = int.tryParse(parts[1]) ?? 0;
 
     debugPrint('⏰ Scheduling alarm at $hour:$minute');
 
@@ -357,7 +299,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
       await _scheduleExactDailyReminder(hour, minute);
     }
 
-    // 🔁 BACKUP
     await _scheduleWorkManagerBackup(hour, minute);
   }
 
@@ -376,29 +317,107 @@ class _TreatmentPageState extends State<TreatmentPage> {
   }
 
   void _showMissedNotificationWarning() {
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     showDialog(
       context: context,
       builder:
-          (context) => AlertDialog(
-            title: const Text('Pengingat Terlewat'),
-            content: const Text(
-              'Sepertinya Anda melewatkan waktu minum obat. Apakah Anda sudah minum obat?',
+          (context) => Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Nanti'),
+            elevation: 8,
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.notification_important_rounded,
+                      color: Colors.orange.shade800,
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Pengingat Terlewat',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Sepertinya Anda melewatkan waktu minum obat. Apakah Anda sudah minum obat?',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      color: Colors.grey.shade600,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            'Nanti',
+                            style: GoogleFonts.plusJakartaSans(
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showUploadDialog();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            'Sudah Minum',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showUploadDialog();
-                },
-                child: const Text('Sudah Minum'),
-              ),
-            ],
+            ),
           ),
     );
   }
@@ -414,14 +433,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
     }
   }
 
-  // ignore: unused_element
-  Future<void> _getSharedPreferences() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _notifIsActive = prefs.getBool('notifIsActive') ?? false;
-    });
-  }
-
   Future<void> _initNotifications() async {
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -430,38 +441,15 @@ class _TreatmentPageState extends State<TreatmentPage> {
       const InitializationSettings(android: initializationSettingsAndroid),
     );
 
-    // const AndroidNotificationChannel medicationChannel =
-    //     AndroidNotificationChannel(
-    //       'reminder_channel',
-    //       'Pengingat Harian',
-    //       description: 'Channel untuk pengingat harian seperti minum obat',
-    //       importance: Importance.high,
-    //       playSound: true,
-    //       enableVibration: true,
-    //       sound: RawResourceAndroidNotificationSound('notification'),
-    //     );
-
-    // const AndroidNotificationChannel medicationChannel =
-    //     AndroidNotificationChannel(
-    //       'reminder_channel_v2', //  GANTI ID
-    //       'Pengingat Harian',
-    //       description: 'Pengingat minum obat harian',
-    //       importance: Importance.max, // WAJIB
-    //       playSound: true,
-    //       enableVibration: true,
-    //     );
-
     const AndroidNotificationChannel medicationChannel =
         AndroidNotificationChannel(
-          'reminder_channel_alarm', // GANTI ID (WAJIB BARU)
+          'reminder_channel_alarm',
           'Alarm Minum Obat',
           description: 'Alarm khusus pengingat minum obat',
           importance: Importance.max,
           playSound: true,
           enableVibration: true,
-          sound: RawResourceAndroidNotificationSound(
-            'alarm_tb_care2',
-          ), // SUARA KHUSUS
+          sound: RawResourceAndroidNotificationSound('alarm_tb_care2'),
         );
 
     const AndroidNotificationChannel visitChannel = AndroidNotificationChannel(
@@ -484,34 +472,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
     await androidPlatform?.createNotificationChannel(visitChannel);
   }
 
-  // ignore: unused_element
-  Future<void> _setNotificationStatus(bool status, int hour, int minute) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (await Permission.notification.isDenied) {
-      await Permission.notification.request();
-    }
-
-    if (await Permission.scheduleExactAlarm.isDenied) {
-      await Permission.scheduleExactAlarm.request();
-    }
-
-    setState(() {
-      _notifIsActive = status;
-      prefs.setBool('notifIsActive', status);
-    });
-
-    if (status) {
-      if (await _canScheduleExactAlarms()) {
-        await _scheduleExactDailyReminder(hour, minute);
-      }
-      await _scheduleWorkManagerBackup(hour, minute);
-    } else {
-      await AndroidAlarmManager.cancel(0);
-      await Workmanager().cancelByTag('daily_medication');
-    }
-  }
-
   Future<bool> _canScheduleExactAlarms() async {
     if (Platform.isAndroid) {
       final androidInfo = await DeviceInfoPlugin().androidInfo;
@@ -527,10 +487,8 @@ class _TreatmentPageState extends State<TreatmentPage> {
       await AndroidAlarmManager.cancel(0);
       await Workmanager().cancelByTag('daily_medication');
 
-      // Get current time in local timezone
       final now = DateTime.now().toLocal();
 
-      // Create scheduled time in local timezone
       var scheduledTime =
           DateTime(now.year, now.month, now.day, hour, minute).toLocal();
 
@@ -551,7 +509,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
         rescheduleOnReboot: true,
       );
     } catch (e) {
-      debugPrint('❌ Error scheduling exact reminder: $e');
+      debugPrint('Error scheduling exact reminder: $e');
       await _scheduleWorkManagerBackup(hour, minute);
     }
   }
@@ -570,9 +528,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
 
       final initialDelay = scheduledTime.difference(now);
 
-      debugPrint(
-        '📆 Scheduling WorkManager backup for: $scheduledTime (Local time)',
-      );
+      debugPrint('Base Scheduling WorkManager backup for: $scheduledTime');
 
       await Workmanager().registerOneOffTask(
         'daily_medication_${scheduledTime.millisecondsSinceEpoch}',
@@ -587,7 +543,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
         tag: 'daily_medication',
       );
     } catch (e) {
-      debugPrint('❌ Error scheduling WorkManager backup: $e');
+      debugPrint('Error scheduling WorkManager backup: $e');
     }
   }
 
@@ -596,8 +552,14 @@ class _TreatmentPageState extends State<TreatmentPage> {
 
     for (final visit in visits) {
       try {
+        if (visit['visit_date'] == null || visit['visit_time'] == null) {
+          continue;
+        }
         final visitDate = DateTime.parse(visit['visit_date']);
         final timeParts = visit['visit_time'].split(':');
+        if (timeParts.length < 2) {
+          continue;
+        }
         final hour = int.parse(timeParts[0]);
         final minute = int.parse(timeParts[1]);
 
@@ -613,7 +575,9 @@ class _TreatmentPageState extends State<TreatmentPage> {
         final reminderTime = scheduledTime.subtract(const Duration(hours: 1));
         final initialDelay = reminderTime.difference(DateTime.now());
 
-        if (initialDelay.isNegative) continue;
+        if (initialDelay.isNegative) {
+          continue;
+        }
 
         await Workmanager().registerOneOffTask(
           'visit_${visit['id']}',
@@ -632,8 +596,25 @@ class _TreatmentPageState extends State<TreatmentPage> {
           'Scheduled visit reminder for ${visit['id']} at $reminderTime',
         );
       } catch (e) {
-        debugPrint('Error scheduling visit ${visit['id']}: $e');
+        debugPrint('Error scheduling visit: $e');
       }
+    }
+  }
+
+  Future<void> _handleUnauthorized() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('user_name');
+    await prefs.remove('user_id');
+    await prefs.remove('user_type_id');
+    await prefs.remove('patient_id');
+
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginPage()),
+        (route) => false,
+      );
     }
   }
 
@@ -642,63 +623,95 @@ class _TreatmentPageState extends State<TreatmentPage> {
     final token = session.getString('token') ?? '';
 
     try {
-      final response = await http.get(
-        Uri.parse('${Connection.BASE_URL}/patients/${widget.patientId}/show'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      final response = await http
+          .get(
+            Uri.parse(
+              '${Connection.BASE_URL}/patients/${widget.patientId}/show',
+            ),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+
+        if (mounted) {
+          setState(() {
+            _patientData = data['data'];
+            _treatments = data['data']['treatments'] ?? [];
+            _currentTreatment =
+                _treatments.isNotEmpty ? _treatments.first : null;
+          });
+        }
+
+        if (_currentTreatment == null) {
+          return data['data'];
+        }
+
+        final treatmentStatus = _currentTreatment!['treatment_status'];
+        final medicationTime = _currentTreatment!['medication_time'];
+
+        final isPatient = await _isPatientUser();
+
+        if (!isPatient) {
+          debugPrint('Bukan pasien → alarm dilewati');
+          return data['data'];
+        }
+
+        // ================== AUTO STOP / AUTO SET ALARM ==================
+        if (treatmentStatus == 'Selesai') {
+          await AndroidAlarmManager.cancel(0);
+          await Workmanager().cancelByTag('daily_medication');
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(_lastMedicationTimeKey);
+          await prefs.setString(_lastTreatmentStatusKey, 'Selesai');
+        } else if (treatmentStatus == 'Berjalan' && medicationTime != null) {
+          await _rescheduleAlarmIfNeeded(medicationTime);
+        }
+
+        // ================== JADWAL KUNJUNGAN ==================
+        if (_currentTreatment!['visits'] != null) {
+          await _scheduleVisitNotifications(_currentTreatment!['visits']);
+        }
+
+        _checkTodayUpload();
+        return data['data'];
+      } else if (response.statusCode == 401) {
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _handleUnauthorized();
+          });
+        }
+        throw Exception('Sesi telah berakhir. Silakan login kembali.');
+      } else if (response.statusCode == 403) {
+        throw Exception(
+          'Akses ditolak. Anda tidak memiliki izin untuk melihat data ini.',
+        );
+      } else if (response.statusCode == 404) {
+        throw Exception('Data pengobatan tidak ditemukan.');
+      } else if (response.statusCode >= 500) {
+        throw Exception(
+          'Terjadi kesalahan pada server. Silakan coba lagi nanti.',
+        );
+      } else {
+        throw Exception(
+          'Gagal memuat data dari server (${response.statusCode})',
+        );
+      }
+    } on SocketException {
+      throw Exception(
+        'Koneksi ke server gagal. Periksa koneksi internet Anda.',
       );
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load patient data');
-      }
-
-      final Map<String, dynamic> data = jsonDecode(response.body);
-
-      // ================== STATE ==================
-      setState(() {
-        _patientData = data['data'];
-        _treatments = data['data']['treatments'] ?? [];
-        _currentTreatment = _treatments.isNotEmpty ? _treatments.first : null;
-      });
-
-      if (_currentTreatment == null) {
-        return data['data'];
-      }
-
-      final treatmentStatus = _currentTreatment!['treatment_status'];
-      final medicationTime = _currentTreatment!['medication_time'];
-
-      final isPatient = await _isPatientUser();
-
-      if (!isPatient) {
-        debugPrint('Bukan pasien → alarm dilewati');
-        return data['data'];
-      }
-
-      // ================== AUTO STOP / AUTO SET ALARM ==================
-      if (treatmentStatus == 'Selesai') {
-        await AndroidAlarmManager.cancel(0);
-        await Workmanager().cancelByTag('daily_medication');
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove(_lastMedicationTimeKey);
-        await prefs.setString(_lastTreatmentStatusKey, 'Selesai');
-      } else if (treatmentStatus == 'Berjalan' && medicationTime != null) {
-        await _rescheduleAlarmIfNeeded(medicationTime);
-      }
-
-      // ================== JADWAL KUNJUNGAN ==================
-      if (_currentTreatment!['visits'] != null) {
-        await _scheduleVisitNotifications(_currentTreatment!['visits']);
-      }
-
-      _checkTodayUpload();
-      return data['data'];
+    } on TimeoutException {
+      throw Exception('Waktu muat data habis. Silakan coba lagi.');
+    } on FormatException {
+      throw Exception('Format data tidak sesuai. Silakan hubungi admin.');
     } catch (e) {
-      log('Error fetching patient data: $e');
-      return {};
+      throw Exception(e.toString().replaceAll('Exception: ', ''));
     }
   }
 
@@ -706,50 +719,87 @@ class _TreatmentPageState extends State<TreatmentPage> {
     final session = await SharedPreferences.getInstance();
     final token = session.getString('token') ?? '';
 
-    final response = await http.get(
-      Uri.parse(
-        '${Connection.BASE_URL}/treatments/${widget.patientId}/history?per_page=1',
-      ),
-      headers: {'Authorization': 'Bearer $token'},
-    );
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              '${Connection.BASE_URL}/treatments/${widget.patientId}/history?per_page=1',
+            ),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 10));
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final history = data['data'] as List<dynamic>;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final history = data['data'] as List<dynamic>;
 
-      setState(() {
-        _uploadedToday = _alreadyUploadedToday(history);
-      });
+        if (mounted) {
+          setState(() {
+            _uploadedToday = _alreadyUploadedToday(history);
+          });
+        }
+      } else if (response.statusCode == 401) {
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _handleUnauthorized();
+          });
+        }
+      }
+    } catch (e) {
+      log('Error checking today upload: $e');
     }
+  }
+
+  String _formatTime(dynamic value) {
+    if (value == null) {
+      return "--:--";
+    }
+    final str = value.toString().trim();
+    if (str.isEmpty) {
+      return "--:--";
+    }
+    if (str.length >= 5) {
+      try {
+        return str.substring(0, 5);
+      } catch (_) {
+        return str;
+      }
+    }
+    return str;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('Pengobatan Saya'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history),
-            onPressed:
-                () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder:
-                        (builder) =>
-                            MedicationHistoryPage(patientId: widget.patientId),
-                  ),
-                ),
+        backgroundColor: Colors.white,
+        foregroundColor: AppColors.primary,
+        elevation: 0,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+        title: Text(
+          'Pengobatan Saya',
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
           ),
-          // IconButton(
-          //   icon: const Icon(Icons.alarm),
-          //   onPressed: _testAlarmOneMinute,
-          // ),
-          // IconButton(
-          //   icon: const Icon(Icons.bug_report),
-          //   onPressed: _testAlarmFromApiTime,
-          // ),
-        ],
+        ),
+        // actions: [
+        //   IconButton(
+        //     icon: const Icon(Icons.medication_rounded),
+        //     tooltip: 'Riwayat Minum Obat',
+        //     onPressed: () {
+        //       Navigator.push(
+        //         context,
+        //         MaterialPageRoute(
+        //           builder:
+        //               (context) =>
+        //                   MedicationHistoryPage(patientId: widget.patientId),
+        //         ),
+        //       );
+        //     },
+        //   ),
+        // ],
       ),
       body: RefreshIndicator(
         onRefresh: _refreshTreatmentPage,
@@ -758,37 +808,29 @@ class _TreatmentPageState extends State<TreatmentPage> {
           future: _patientFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return _buildLoadingState();
             } else if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}'));
+              return _buildErrorState(snapshot.error.toString());
             } else if (!snapshot.hasData || _currentTreatment == null) {
-              return SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    const Center(child: Text('Tidak ada data pengobatan')),
-                  ],
-                ),
-              );
+              return _buildEmptyTreatmentCard();
             }
 
             return SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildStatusCard(_currentTreatment!),
+                  _buildMainJourneyCard(_currentTreatment!),
                   const SizedBox(height: 24),
                   _buildRegimenDetails(_currentTreatment!),
                   const SizedBox(height: 24),
-                  if (_currentTreatment!['medication_time'] != null)
-                    _buildMedicationReminder(_currentTreatment!),
-                  const SizedBox(height: 24),
                   if (_currentTreatment!['prescription'] != null &&
-                      _currentTreatment!['prescription'].isNotEmpty)
+                      _currentTreatment!['prescription'].isNotEmpty) ...[
                     _buildDrugList(_currentTreatment!['prescription']),
+                    const SizedBox(height: 24),
+                  ],
+                  _buildHistorySection(),
                 ],
               ),
             );
@@ -798,44 +840,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
     );
   }
 
-  Widget _buildDrugCard(String drug) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 1,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.blue[50],
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.medication, color: Colors.blue),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    drug,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusCard(Map<String, dynamic> treatmentData) {
+  Widget _buildMainJourneyCard(Map<String, dynamic> treatmentData) {
     final currentDay = _calculateCurrentDay(
       treatmentData['start_date'],
       treatmentData['end_date'],
@@ -844,256 +849,309 @@ class _TreatmentPageState extends State<TreatmentPage> {
       treatmentData['start_date'],
       treatmentData['end_date'],
     );
-    final progress = currentDay / totalDays;
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.medical_services, color: AppColors.primary),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Status Pengobatan',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  onPressed:
-                      () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder:
-                              (builder) => TreatmentHistoryPage(
-                                patientId: widget.patientId,
-                                patientName: _patientData['name'] ?? 'Pasien',
-                              ),
-                        ),
-                      ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Pengobatan TB",
-              style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 16),
-            LinearProgressIndicator(
-              value: progress,
-              backgroundColor: Colors.grey[200],
-              color: Colors.green,
-              minHeight: 8,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Hari ke-$currentDay dari $totalDays',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                    ),
-                    Text(
-                      '${treatmentData['start_date'] ?? 'Tanggal mulai'} - ${treatmentData['end_date'] ?? 'Tanggal selesai'}',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                    ),
-                  ],
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _getStatusColor(
-                      treatmentData['treatment_status'],
-                      true,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: _getStatusColor(
-                        treatmentData['treatment_status'],
-                        false,
-                      ),
-                    ),
-                  ),
-                  child: Text(
-                    treatmentData['treatment_status'] ??
-                        'Status tidak tersedia',
-                    style: TextStyle(
-                      color: _getStatusTextColor(
-                        treatmentData['treatment_status'],
-                      ),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  int _calculateCurrentDay(String? startDate, String? endDate) {
-    if (startDate == null || endDate == null) return 0;
-
-    try {
-      final start = DateTime.parse(startDate);
-      final end = DateTime.parse(endDate);
-      final today = DateTime.now();
-
-      if (today.isBefore(start)) return 0;
-      if (today.isAfter(end)) return end.difference(start).inDays;
-
-      return today.difference(start).inDays;
-    } catch (e) {
-      return 0;
+    double progress = 0.0;
+    if (totalDays > 0) {
+      progress = (currentDay / totalDays).clamp(0.0, 1.0);
     }
-  }
+    final percent = (progress * 100).toInt();
 
-  int _calculateTotalDays(String? startDate, String? endDate) {
-    if (startDate == null || endDate == null) return 1;
+    final treatmentStatus = treatmentData['treatment_status'] ?? 'Berjalan';
+    final treatmentTypeId = treatmentData['treatment_type_id'];
 
-    try {
-      final start = DateTime.parse(startDate);
-      final end = DateTime.parse(endDate);
-      return end.difference(start).inDays;
-    } catch (e) {
-      return 1;
+    final timeString = _formatTime(treatmentData['medication_time']);
+    final timeParts = timeString.split(':');
+
+    int hour = 12;
+    int minute = 0;
+    if (timeParts.length >= 2) {
+      hour = int.tryParse(timeParts[0]) ?? 12;
+      minute = int.tryParse(timeParts[1]) ?? 0;
     }
-  }
+    final medicationTime = TimeOfDay(hour: hour, minute: minute);
 
-  Color _getStatusColor(String? status, bool isBackground) {
-    switch (status) {
-      case 'Berjalan':
-        return isBackground ? Colors.green[50]! : Colors.green;
-      case 'Selesai':
-        return isBackground ? Colors.blue[50]! : Colors.blue;
-      default:
-        return isBackground ? Colors.grey[200]! : Colors.grey;
-    }
-  }
-
-  Color _getStatusTextColor(String? status) {
-    switch (status) {
-      case 'Berjalan':
-        return Colors.green[800]!;
-      case 'Selesai':
-        return Colors.blue[800]!;
-      default:
-        return Colors.grey[800]!;
-    }
-  }
-
-  Widget _buildRegimenDetails(Map<String, dynamic> treatment) {
-    final duration = _calculateDuration(
-      DateTime.parse(treatment['start_date']),
-      DateTime.parse(treatment['end_date']),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Detail Regimen",
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 12),
-        _buildDetailRow(
-          "Tanggal Mulai",
-          _formatDate(DateTime.parse(treatment['start_date'])),
-        ),
-        _buildDetailRow(
-          "Tanggal Selesai",
-          _formatDate(DateTime.parse(treatment['end_date'])),
-        ),
-        _buildDetailRow("Durasi", duration),
-      ],
-    );
-  }
-
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(color: Colors.grey[600])),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.shade100, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildMedicationReminder(Map<String, dynamic> treatment) {
-    final timeString = treatment['medication_time'] as String; // e.g. "08:30"
-    final timeParts = timeString.split(':');
-    final medicationTime = TimeOfDay(
-      hour: int.parse(timeParts[0]),
-      minute: int.parse(timeParts[1]),
-    );
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
+      padding: const EdgeInsets.all(22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ==================== AREA A — PROGRESS PENGOBATAN ====================
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                const Icon(Icons.notifications_active, color: Colors.orange),
-                const SizedBox(width: 12),
-                const Text(
-                  "Pengingat Obat",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                Text(
+                  'Progress Pengobatan',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color:
+                            treatmentStatus == 'Berjalan'
+                                ? Colors.green.shade50
+                                : Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              treatmentStatus == 'Berjalan'
+                                  ? Colors.green.shade200
+                                  : Colors.blue.shade200,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            treatmentStatus == 'Berjalan'
+                                ? Icons.play_circle_filled_rounded
+                                : Icons.check_circle_rounded,
+                            size: 12,
+                            color:
+                                treatmentStatus == 'Berjalan'
+                                    ? Colors.green.shade700
+                                    : Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            treatmentStatus,
+                            style: GoogleFonts.plusJakartaSans(
+                              color:
+                                  treatmentStatus == 'Berjalan'
+                                      ? Colors.green.shade700
+                                      : Colors.blue.shade700,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              "Minum obat berikutnya:",
-              style: TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 20),
+
+          Text(
+            _getTreatmentType(treatmentTypeId).toUpperCase(),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: Colors.grey.shade500,
+              letterSpacing: 1.2,
             ),
-            const SizedBox(height: 4),
-            Text(
-              _getNextMedicationTime(medicationTime),
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
+          ),
+          const SizedBox(height: 8),
+
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                'Hari ke-$currentDay',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'dari $totalDays hari',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade500,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: SizedBox(
+              height: 10,
+              child: LinearProgressIndicator(
+                value: progress,
+                backgroundColor: Colors.grey.shade100,
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  AppColors.primary,
+                ),
               ),
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$percent% selesai',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              Icon(
+                Icons.date_range_rounded,
+                color: Colors.grey.shade400,
+                size: 14,
+              ),
+              Builder(
+                builder: (context) {
+                  String formattedPeriod = '--';
+                  try {
+                    if (treatmentData['start_date'] != null &&
+                        treatmentData['end_date'] != null) {
+                      final start = DateTime.parse(treatmentData['start_date']);
+                      final end = DateTime.parse(treatmentData['end_date']);
+                      final startStr = DateFormat(
+                        'dd MMMM yyyy',
+                        'id_ID',
+                      ).format(start);
+                      final endStr = DateFormat(
+                        'dd MMMM yyyy',
+                        'id_ID',
+                      ).format(end);
+                      formattedPeriod = '$startStr → $endStr';
+                    } else {
+                      formattedPeriod =
+                          '${treatmentData['start_date'] ?? '--'} → ${treatmentData['end_date'] ?? '--'}';
+                    }
+                  } catch (e) {
+                    formattedPeriod =
+                        '${treatmentData['start_date'] ?? '--'} → ${treatmentData['end_date'] ?? '--'}';
+                  }
+                  return Text(
+                    formattedPeriod,
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+
+          // ==================== SEPARATOR ====================
+          const Divider(height: 40, thickness: 1, color: Color(0xFFF1F5F9)),
+
+          // ==================== AREA B — PENGINGAT MINUM OBAT ====================
+          if (treatmentData['medication_time'] != null) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.notifications_active_rounded,
+                    color: Colors.orange,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "PENGINGAT MINUM OBAT",
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.grey.shade500,
+                          letterSpacing: 1.1,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "Waktu minum obat setiap hari",
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _getNextMedicationTime(medicationTime),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Center(
+              child: Text(
+                "Sudah minum obat hari ini?",
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
+              height: 52,
               child: ElevatedButton(
                 onPressed: _isUploading ? null : _showUploadDialog,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  elevation: 0,
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: AppColors.primary.withValues(
+                    alpha: 0.6,
+                  ),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                 ),
                 child: Row(
@@ -1109,22 +1167,30 @@ class _TreatmentPageState extends State<TreatmentPage> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      const Text(
-                        'MENGUNGGAH...',
-                        style: TextStyle(
+                      Text(
+                        'Mengunggah Bukti...',
+                        style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.bold,
+                          fontSize: 15,
                           color: Colors.white,
                         ),
                       ),
                     ] else ...[
-                      const Icon(Icons.medical_services, color: Colors.white),
-                      const SizedBox(width: 8),
+                      Icon(
+                        _uploadedToday
+                            ? Icons.refresh_rounded
+                            : Icons.check_circle_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
                       Text(
                         _uploadedToday
-                            ? 'UPLOAD ULANG FOTO'
-                            : 'SUDAH MINUM OBAT',
-                        style: const TextStyle(
+                            ? 'Perbarui Bukti Minum Obat'
+                            : 'Sudah Minum Obat',
+                        style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.bold,
+                          fontSize: 15,
                           color: Colors.white,
                         ),
                       ),
@@ -1133,44 +1199,435 @@ class _TreatmentPageState extends State<TreatmentPage> {
                 ),
               ),
             ),
+            if (_uploadedToday) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.verified_rounded,
+                      color: Color(0xFF10B981),
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Bukti minum obat hari ini sudah dikirim",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF10B981),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistorySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "Riwayat",
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          "Catatan aktivitas dan perjalanan pengobatan Anda",
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 12,
+            color: Colors.grey.shade500,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildHistoryActionCard(
+          icon: Icons.medication_rounded,
+          title: "Riwayat Minum Obat",
+          subtitle: "Catatan aktivitas minum obat setiap hari",
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (context) =>
+                        MedicationHistoryPage(patientId: widget.patientId),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildHistoryActionCard(
+          icon: Icons.timeline_rounded,
+          title: "Riwayat Pengobatan",
+          subtitle: "Catatan perjalanan pengobatan Anda",
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (context) => TreatmentHistoryPage(
+                      patientId: widget.patientId,
+                      patientName: _patientData['name'] ?? 'Pasien',
+                    ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHistoryActionCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.01),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, color: AppColors.primary, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  color: Colors.grey.shade400,
+                  size: 14,
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
+  int _calculateCurrentDay(String? startDate, String? endDate) {
+    if (startDate == null || endDate == null) {
+      return 0;
+    }
+
+    try {
+      final start = DateTime.parse(startDate);
+      final end = DateTime.parse(endDate);
+      final now = DateTime.now();
+
+      final startOnly = DateTime(start.year, start.month, start.day);
+      final endOnly = DateTime(end.year, end.month, end.day);
+      final todayOnly = DateTime(now.year, now.month, now.day);
+
+      if (todayOnly.isBefore(startOnly)) {
+        return 0;
+      }
+      if (todayOnly.isAfter(endOnly)) {
+        return endOnly.difference(startOnly).inDays + 1;
+      }
+
+      return todayOnly.difference(startOnly).inDays + 1;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  int _calculateTotalDays(String? startDate, String? endDate) {
+    if (startDate == null || endDate == null) {
+      return 1;
+    }
+
+    try {
+      final start = DateTime.parse(startDate);
+      final end = DateTime.parse(endDate);
+
+      final startOnly = DateTime(start.year, start.month, start.day);
+      final endOnly = DateTime(end.year, end.month, end.day);
+
+      return endOnly.difference(startOnly).inDays + 1;
+    } catch (e) {
+      return 1;
+    }
+  }
+
+  String _getTreatmentType(int? typeId) {
+    switch (typeId) {
+      case 1:
+        return 'TB Aktif';
+      case 2:
+        return 'TB Laten';
+      case 3:
+        return 'TB MDR';
+      default:
+        return 'Jenis TB Tidak Diketahui';
+    }
+  }
+
+  Widget _buildRegimenDetails(Map<String, dynamic> treatment) {
+    String duration = '--';
+    String startDateFormatted = '--';
+    String endDateFormatted = '--';
+
+    try {
+      if (treatment['start_date'] != null && treatment['end_date'] != null) {
+        final start = DateTime.parse(treatment['start_date']);
+        final end = DateTime.parse(treatment['end_date']);
+        duration = _calculateDuration(start, end);
+        startDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(start);
+        endDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(end);
+      }
+    } catch (e) {
+      log('Error parsing dates for regimen details: $e');
+    }
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.01),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.assignment_rounded,
+                color: AppColors.primary,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                "Detail Regimen",
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 24, thickness: 1),
+          _buildDetailRow(
+            Icons.play_circle_outline_rounded,
+            "Tanggal Mulai",
+            startDateFormatted,
+          ),
+          const SizedBox(height: 12),
+          _buildDetailRow(
+            Icons.stop_circle_outlined,
+            "Tanggal Selesai",
+            endDateFormatted,
+          ),
+          const SizedBox(height: 12),
+          _buildDetailRow(Icons.timelapse_rounded, "Durasi Program", duration),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey.shade400),
+        const SizedBox(width: 10),
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            color: Colors.grey.shade600,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // _buildMedicationReminder has been integrated into _buildMainJourneyCard
+
   void _showUploadDialog() {
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Konfirmasi Minum Obat'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Apakah Anda sudah minum obat hari ini?'),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Nanti'),
-                    ),
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+          elevation: 8,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showUploadOptions();
-                      },
-                      child: const Text('Konfirmasi'),
-                    ),
+                  child: const Icon(
+                    Icons.done_all_rounded,
+                    color: AppColors.primary,
+                    size: 30,
                   ),
-                ],
-              ),
-            ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Sudah Minum Obat?',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Pastikan Anda sudah minum obat TB hari ini. Anda dapat mengunggah foto sebagai bukti.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    color: Colors.grey.shade600,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Nanti',
+                          style: GoogleFonts.plusJakartaSans(
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showUploadOptions();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Konfirmasi',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -1181,14 +1638,63 @@ class _TreatmentPageState extends State<TreatmentPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           "Daftar Obat",
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey.shade800,
+          ),
         ),
         const SizedBox(height: 12),
-        // ignore: unnecessary_to_list_in_spreads
-        ...prescription.map((drug) => _buildDrugCard(drug)).toList(),
+        Column(
+          children:
+              prescription
+                  .map((drug) => _buildDrugCard(drug.toString()))
+                  .toList(),
+        ),
       ],
+    );
+  }
+
+  Widget _buildDrugCard(String drug) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade100, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.01),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.08),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.medication_rounded,
+            color: AppColors.primary,
+            size: 22,
+          ),
+        ),
+        title: Text(
+          drug,
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+            color: Colors.grey.shade800,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1199,59 +1705,82 @@ class _TreatmentPageState extends State<TreatmentPage> {
     return '$months Bulan';
   }
 
-  String _formatDate(DateTime date) {
-    return DateFormat('dd MMMM yyyy').format(date);
-  }
-
   String _getNextMedicationTime(TimeOfDay medicationTime) {
-    return 'Setiap hari, ${medicationTime.hour}:${medicationTime.minute.toString().padLeft(2, '0')} WIB';
+    final hourStr = medicationTime.hour.toString().padLeft(2, '0');
+    final minuteStr = medicationTime.minute.toString().padLeft(2, '0');
+    return '$hourStr:$minuteStr WIB';
   }
-
-  // void _toggleReminder(bool value, int hour, int minute) async {
-  //   try {
-  //     // await _setNotificationStatus(value, hour, minute);
-
-  //     // Debug print to verify the time being set
-  //     debugPrint('Setting reminder for: $hour:$minute');
-
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       SnackBar(
-  //         content: Text(
-  //           "Pengingat ${value ? 'diaktifkan' : 'dinonaktifkan'} untuk $hour:$minute",
-  //         ),
-  //       ),
-  //     );
-  //   } catch (e) {
-  //     debugPrint('Error toggling reminder: $e');
-  //     ScaffoldMessenger.of(
-  //       context,
-  //     ).showSnackBar(const SnackBar(content: Text("Gagal mengubah pengingat")));
-  //   }
-  // }
 
   void _showUploadOptions() {
-    // ignore: no_leading_underscores_for_local_identifiers
-    final ImagePicker _picker = ImagePicker();
+    final ImagePicker picker = ImagePicker();
 
     showModalBottomSheet(
       context: context,
+      backgroundColor: Colors.transparent,
       builder:
-          (context) => Padding(
-            padding: const EdgeInsets.all(16),
+          (context) => Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text(
-                  'Upload Bukti Minum Obat',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
+                Text(
+                  'Unggah Bukti Minum Obat',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Pilih metode pengambilan foto bukti minum obat',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                const SizedBox(height: 20),
                 ListTile(
-                  leading: Icon(Icons.camera_alt, color: AppColors.primary),
-                  title: const Text('Ambil Foto'),
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt_rounded,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                  ),
+                  title: Text(
+                    'Ambil Foto Kamera',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
                   onTap: () async {
                     Navigator.pop(context);
-                    final XFile? photo = await _picker.pickImage(
+                    final XFile? photo = await picker.pickImage(
                       source: ImageSource.camera,
                     );
                     if (photo != null) {
@@ -1259,12 +1788,30 @@ class _TreatmentPageState extends State<TreatmentPage> {
                     }
                   },
                 ),
+                Divider(color: Colors.grey.shade100, height: 1),
                 ListTile(
-                  leading: Icon(Icons.photo_library, color: AppColors.primary),
-                  title: const Text('Pilih dari Galeri'),
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.photo_library_rounded,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                  ),
+                  title: Text(
+                    'Pilih dari Galeri',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
                   onTap: () async {
                     Navigator.pop(context);
-                    final XFile? image = await _picker.pickImage(
+                    final XFile? image = await picker.pickImage(
                       source: ImageSource.gallery,
                     );
                     if (image != null) {
@@ -1272,21 +1819,379 @@ class _TreatmentPageState extends State<TreatmentPage> {
                     }
                   },
                 ),
-                const SizedBox(height: 8),
+                Divider(color: Colors.grey.shade100, height: 1),
+                const SizedBox(height: 12),
                 TextButton(
                   onPressed: () {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Konfirmasi obat berhasil dicatat'),
+                      SnackBar(
+                        content: Text(
+                          'Konfirmasi tanpa foto belum tersedia. Silakan unggah foto sebagai bukti minum obat.',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        backgroundColor: Colors.orangeAccent,
                       ),
                     );
                   },
-                  child: const Text('Tanpa Foto'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    'Tanpa Foto',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
+    );
+  }
+
+  Widget _buildEmptyTreatmentCard() {
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(height: 60),
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.medical_services_outlined,
+                color: AppColors.primary,
+                size: 38,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              "Belum Ada Informasi Pengobatan",
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.grey.shade800,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Belum terdapat informasi pengobatan TB yang tersedia pada akun Anda.",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.grey.shade600,
+                fontSize: 13,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F8FF),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.info_outline_rounded,
+                    color: AppColors.primary,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Silakan hubungi petugas TB di fasilitas kesehatan Anda untuk memulai program.",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: AppColors.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    log('DEBUG ERROR: $message');
+
+    String friendlyMsg =
+        'Terjadi kesalahan saat memuat data. Silakan coba lagi.';
+    final lowerMsg = message.toLowerCase();
+
+    if (lowerMsg.contains('socketexception') ||
+        lowerMsg.contains('koneksi ke server gagal')) {
+      friendlyMsg = 'Koneksi ke server gagal. Periksa koneksi internet Anda.';
+    } else if (lowerMsg.contains('timeout') ||
+        lowerMsg.contains('timeoutexception')) {
+      friendlyMsg = 'Waktu muat data habis. Silakan coba lagi.';
+    } else if (lowerMsg.contains('401') ||
+        lowerMsg.contains('sesi telah berakhir')) {
+      friendlyMsg = 'Sesi telah berakhir. Silakan login kembali.';
+    } else if (lowerMsg.contains('403') || lowerMsg.contains('akses ditolak')) {
+      friendlyMsg =
+          'Akses ditolak. Anda tidak memiliki izin untuk melihat data ini.';
+    } else if (lowerMsg.contains('404') ||
+        lowerMsg.contains('tidak ditemukan')) {
+      friendlyMsg = 'Data pengobatan tidak ditemukan.';
+    } else if (lowerMsg.contains('500') ||
+        lowerMsg.contains('kesalahan pada server')) {
+      friendlyMsg = 'Terjadi kesalahan pada server. Silakan coba lagi nanti.';
+    } else {
+      friendlyMsg =
+          message
+              .replaceAll('Exception:', '')
+              .replaceAll('exception:', '')
+              .trim();
+      if (friendlyMsg.isEmpty) {
+        friendlyMsg = 'Data belum dapat dimuat. Silakan coba lagi.';
+      }
+    }
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.cloud_off_rounded,
+                color: Colors.red.shade400,
+                size: 48,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Data belum dapat dimuat',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              friendlyMsg,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                color: Colors.grey.shade500,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: 160,
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: _refreshTreatmentPage,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(
+                  'Coba Lagi',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            height: 420,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+            ),
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      width: 160,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    Container(
+                      width: 60,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Container(
+                  width: 80,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: 200,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: 140,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Divider(height: 1, color: Colors.grey.shade200),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 100,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: 80,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Container(
+                  width: double.infinity,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade200,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          Container(
+            width: 120,
+            height: 16,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          Container(
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1296,8 +2201,27 @@ class _TreatmentPageState extends State<TreatmentPage> {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token') ?? '';
 
-    final request = http.MultipartRequest('POST', uri);
+    if (token.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sesi telah berakhir. Silakan login kembali.'),
+          ),
+        );
+      }
+      return;
+    }
 
+    if (!await imageFile.exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File gambar bukti tidak ditemukan.')),
+        );
+      }
+      return;
+    }
+
+    final request = http.MultipartRequest('POST', uri);
     request.headers.addAll({
       'Authorization': 'Bearer $token',
       'Accept': 'application/json',
@@ -1305,7 +2229,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
 
     request.fields['patient_treatment_id'] = patientTreatmentId;
 
-    // 🔥 FIX UTAMA: FORCE JPEG
     final bytes = await imageFile.readAsBytes();
 
     request.files.add(
@@ -1318,40 +2241,72 @@ class _TreatmentPageState extends State<TreatmentPage> {
     );
 
     try {
-      final response = await request.send();
+      final response = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
       final body = await response.stream.bytesToString();
 
       debugPrint('UPLOAD STATUS: ${response.statusCode}');
       debugPrint('UPLOAD BODY: $body');
 
       if (response.statusCode == 201) {
-        setState(() {
-          _uploadedToday = true;
-        });
-
-        ScaffoldMessenger.of(
-          // ignore: use_build_context_synchronously
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Foto berhasil diunggah')));
+        if (mounted) {
+          setState(() {
+            _uploadedToday = true;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Foto berhasil diunggah',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
+              ),
+              backgroundColor: const Color(0xFF10B981),
+            ),
+          );
+        }
+      } else if (response.statusCode == 401) {
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _handleUnauthorized();
+          });
+        }
       } else {
-        // ignore: use_build_context_synchronously
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Upload gagal (${response.statusCode})')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Upload gagal (${response.statusCode})'),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        // ignore: use_build_context_synchronously
-        context,
-      ).showSnackBar(SnackBar(content: Text('Terjadi error: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Terjadi error: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      try {
+        if (await imageFile.exists()) {
+          await imageFile.delete();
+        }
+      } catch (e) {
+        log('Gagal menghapus file sementara: $e');
+      }
     }
   }
 
   void _handleSelectedImage(File imageFile) async {
-    if (_currentTreatment == null) return;
+    if (_currentTreatment == null) {
+      return;
+    }
 
     setState(() {
-      _isUploading = true; // 🔄 START LOADING
+      _isUploading = true;
     });
 
     try {
@@ -1362,7 +2317,12 @@ class _TreatmentPageState extends State<TreatmentPage> {
         throw Exception('Gagal memproses gambar');
       }
 
-      final jpegBytes = img.encodeJpg(decodedImage, quality: 85);
+      img.Image resizedImage = decodedImage;
+      if (decodedImage.width > 1080) {
+        resizedImage = img.copyResize(decodedImage, width: 1080);
+      }
+
+      final jpegBytes = img.encodeJpg(resizedImage, quality: 80);
       final tempDir = await getTemporaryDirectory();
 
       final fixedFile = File(
@@ -1376,14 +2336,18 @@ class _TreatmentPageState extends State<TreatmentPage> {
       // 🔁 refresh data agar sinkron
       await _refreshTreatmentPage();
     } catch (e) {
-      ScaffoldMessenger.of(
-        // ignore: use_build_context_synchronously
-        context,
-      ).showSnackBar(SnackBar(content: Text('Gagal upload: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal upload: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
-          _isUploading = false; // ✅ STOP LOADING
+          _isUploading = false;
         });
       }
     }
