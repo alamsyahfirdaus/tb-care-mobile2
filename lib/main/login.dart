@@ -290,9 +290,9 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                         child: Image.asset(
-                          'assets/images/logo_tbcare.png',
-                          height: 56,
-                          width: 56,
+                          'assets/images/tbcare-transparent.png',
+                          height: 72,
+                          width: 72,
                         ),
                       ),
                     ),

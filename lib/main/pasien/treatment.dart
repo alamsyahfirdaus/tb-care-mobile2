@@ -1,4 +1,4 @@
-// ignore_for_file: deprecated_member_use
+// ignore_for_file: deprecated_member_use, unused_field, unused_element
 
 import 'dart:async';
 import 'dart:convert';
@@ -823,8 +823,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
                 children: [
                   _buildMainJourneyCard(_currentTreatment!),
                   const SizedBox(height: 24),
-                  _buildRegimenDetails(_currentTreatment!),
-                  const SizedBox(height: 24),
                   if (_currentTreatment!['prescription'] != null &&
                       _currentTreatment!['prescription'].isNotEmpty) ...[
                     _buildDrugList(_currentTreatment!['prescription']),
@@ -841,34 +839,37 @@ class _TreatmentPageState extends State<TreatmentPage> {
   }
 
   Widget _buildMainJourneyCard(Map<String, dynamic> treatmentData) {
-    final currentDay = _calculateCurrentDay(
-      treatmentData['start_date'],
-      treatmentData['end_date'],
-    );
-    final totalDays = _calculateTotalDays(
-      treatmentData['start_date'],
-      treatmentData['end_date'],
-    );
-
-    double progress = 0.0;
-    if (totalDays > 0) {
-      progress = (currentDay / totalDays).clamp(0.0, 1.0);
-    }
-    final percent = (progress * 100).toInt();
-
     final treatmentStatus = treatmentData['treatment_status'] ?? 'Berjalan';
     final treatmentTypeId = treatmentData['treatment_type_id'];
 
-    final timeString = _formatTime(treatmentData['medication_time']);
-    final timeParts = timeString.split(':');
+    String duration = '--';
+    String startDateFormatted = '--';
+    String endDateFormatted = '--';
 
-    int hour = 12;
-    int minute = 0;
-    if (timeParts.length >= 2) {
-      hour = int.tryParse(timeParts[0]) ?? 12;
-      minute = int.tryParse(timeParts[1]) ?? 0;
+    try {
+      if (treatmentData['start_date'] != null &&
+          treatmentData['end_date'] != null) {
+        final start = DateTime.parse(treatmentData['start_date']);
+        final end = DateTime.parse(treatmentData['end_date']);
+        duration = _calculateDuration(start, end);
+        startDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(start);
+        endDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(end);
+      }
+    } catch (e) {
+      log('Error parsing dates for status card: $e');
     }
-    final medicationTime = TimeOfDay(hour: hour, minute: minute);
+
+    final isBerjalan = treatmentStatus == 'Berjalan';
+    final badgeBgColor =
+        isBerjalan ? const Color(0xFFECFDF5) : const Color(0xFFEFF6FF);
+    final badgeTextColor =
+        isBerjalan ? const Color(0xFF059669) : const Color(0xFF2563EB);
+    final badgeBorderColor =
+        isBerjalan ? const Color(0xFFA7F3D0) : const Color(0xFFBFDBFE);
+    final badgeIcon =
+        isBerjalan
+            ? Icons.play_circle_filled_rounded
+            : Icons.check_circle_rounded;
 
     return Container(
       width: double.infinity,
@@ -888,344 +889,125 @@ class _TreatmentPageState extends State<TreatmentPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ==================== AREA A — PROGRESS PENGOBATAN ====================
-          SizedBox(
-            width: double.infinity,
-            child: Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                Text(
-                  'Progress Pengobatan',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color:
-                            treatmentStatus == 'Berjalan'
-                                ? Colors.green.shade50
-                                : Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color:
-                              treatmentStatus == 'Berjalan'
-                                  ? Colors.green.shade200
-                                  : Colors.blue.shade200,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            treatmentStatus == 'Berjalan'
-                                ? Icons.play_circle_filled_rounded
-                                : Icons.check_circle_rounded,
-                            size: 12,
-                            color:
-                                treatmentStatus == 'Berjalan'
-                                    ? Colors.green.shade700
-                                    : Colors.blue.shade700,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            treatmentStatus,
-                            style: GoogleFonts.plusJakartaSans(
-                              color:
-                                  treatmentStatus == 'Berjalan'
-                                      ? Colors.green.shade700
-                                      : Colors.blue.shade700,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          Text(
-            _getTreatmentType(treatmentTypeId).toUpperCase(),
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              color: Colors.grey.shade500,
-              letterSpacing: 1.2,
-            ),
-          ),
-          const SizedBox(height: 8),
-
           Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                'Hari ke-$currentDay',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.grey.shade800,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'dari $totalDays hari',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey.shade500,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: SizedBox(
-              height: 10,
-              child: LinearProgressIndicator(
-                value: progress,
-                backgroundColor: Colors.grey.shade100,
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                  AppColors.primary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '$percent% selesai',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              Icon(
-                Icons.date_range_rounded,
-                color: Colors.grey.shade400,
-                size: 14,
-              ),
-              Builder(
-                builder: (context) {
-                  String formattedPeriod = '--';
-                  try {
-                    if (treatmentData['start_date'] != null &&
-                        treatmentData['end_date'] != null) {
-                      final start = DateTime.parse(treatmentData['start_date']);
-                      final end = DateTime.parse(treatmentData['end_date']);
-                      final startStr = DateFormat(
-                        'dd MMMM yyyy',
-                        'id_ID',
-                      ).format(start);
-                      final endStr = DateFormat(
-                        'dd MMMM yyyy',
-                        'id_ID',
-                      ).format(end);
-                      formattedPeriod = '$startStr → $endStr';
-                    } else {
-                      formattedPeriod =
-                          '${treatmentData['start_date'] ?? '--'} → ${treatmentData['end_date'] ?? '--'}';
-                    }
-                  } catch (e) {
-                    formattedPeriod =
-                        '${treatmentData['start_date'] ?? '--'} → ${treatmentData['end_date'] ?? '--'}';
-                  }
-                  return Text(
-                    formattedPeriod,
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.grey.shade600,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+              Expanded(
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.medication_rounded,
+                      color: AppColors.primary,
+                      size: 22,
                     ),
-                  );
-                },
-              ),
-            ],
-          ),
-
-          // ==================== SEPARATOR ====================
-          const Divider(height: 40, thickness: 1, color: Color(0xFFF1F5F9)),
-
-          // ==================== AREA B — PENGINGAT MINUM OBAT ====================
-          if (treatmentData['medication_time'] != null) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.notifications_active_rounded,
-                    color: Colors.orange,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "PENGINGAT MINUM OBAT",
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _getTreatmentType(treatmentTypeId),
                         style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.grey.shade500,
-                          letterSpacing: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "Waktu minum obat setiap hari",
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12,
-                          color: Colors.grey.shade500,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _getNextMedicationTime(medicationTime),
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
                           color: Colors.grey.shade800,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Center(
-              child: Text(
-                "Sudah minum obat hari ini?",
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _isUploading ? null : _showUploadDialog,
-                style: ElevatedButton.styleFrom(
-                  elevation: 0,
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: AppColors.primary.withValues(
-                    alpha: 0.6,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (_isUploading) ...[
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        'Mengunggah Bukti...',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ] else ...[
-                      Icon(
-                        _uploadedToday
-                            ? Icons.refresh_rounded
-                            : Icons.check_circle_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        _uploadedToday
-                            ? 'Perbarui Bukti Minum Obat'
-                            : 'Sudah Minum Obat',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ],
+                    ),
                   ],
                 ),
               ),
-            ),
-            if (_uploadedToday) ...[
-              const SizedBox(height: 12),
-              Center(
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: badgeBgColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: badgeBorderColor, width: 1),
+                ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.verified_rounded,
-                      color: Color(0xFF10B981),
-                      size: 14,
-                    ),
-                    const SizedBox(width: 6),
+                    Icon(badgeIcon, size: 12, color: badgeTextColor),
+                    const SizedBox(width: 4),
                     Text(
-                      "Bukti minum obat hari ini sudah dikirim",
+                      treatmentStatus,
                       style: GoogleFonts.plusJakartaSans(
-                        color: const Color(0xFF10B981),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        color: badgeTextColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
               ),
             ],
-          ],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "Detail Pengobatan",
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const Divider(height: 24, thickness: 1, color: Color(0xFFF1F5F9)),
+
+          _buildStatusDetailRow(
+            Icons.date_range_rounded,
+            "Tanggal Mulai",
+            startDateFormatted,
+          ),
+          const SizedBox(height: 16),
+          _buildStatusDetailRow(
+            Icons.date_range_rounded,
+            "Tanggal Selesai",
+            endDateFormatted,
+          ),
+          const SizedBox(height: 16),
+          _buildStatusDetailRow(
+            Icons.timelapse_rounded,
+            "Durasi Pengobatan",
+            duration,
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildStatusDetailRow(IconData icon, String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: Colors.grey.shade400),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.grey.shade500,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(left: 22),
+          child: Text(
+            value,
+            style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1254,7 +1036,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
         _buildHistoryActionCard(
           icon: Icons.medication_rounded,
           title: "Riwayat Minum Obat",
-          subtitle: "Catatan aktivitas minum obat setiap hari",
+          subtitle: "Lihat catatan bukti minum obat",
           onTap: () {
             Navigator.push(
               context,
@@ -1270,7 +1052,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
         _buildHistoryActionCard(
           icon: Icons.timeline_rounded,
           title: "Riwayat Pengobatan",
-          subtitle: "Catatan perjalanan pengobatan Anda",
+          subtitle: "Lihat perjalanan pengobatan",
           onTap: () {
             Navigator.push(
               context,
@@ -1468,7 +1250,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
               ),
               const SizedBox(width: 8),
               Text(
-                "Detail Regimen",
+                "Detail Pengobatan",
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -1490,7 +1272,11 @@ class _TreatmentPageState extends State<TreatmentPage> {
             endDateFormatted,
           ),
           const SizedBox(height: 12),
-          _buildDetailRow(Icons.timelapse_rounded, "Durasi Program", duration),
+          _buildDetailRow(
+            Icons.timelapse_rounded,
+            "Durasi Pengobatan",
+            duration,
+          ),
         ],
       ),
     );
@@ -1881,7 +1667,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
             ),
             const SizedBox(height: 20),
             Text(
-              "Belum Ada Informasi Pengobatan",
+              "Belum Ada Pengobatan",
               style: GoogleFonts.plusJakartaSans(
                 color: Colors.grey.shade800,
                 fontSize: 18,
@@ -1890,7 +1676,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              "Belum terdapat informasi pengobatan TB yang tersedia pada akun Anda.",
+              "Belum terdapat informasi pengobatan TB pada akun Anda.",
               textAlign: TextAlign.center,
               style: GoogleFonts.plusJakartaSans(
                 color: Colors.grey.shade600,
@@ -2044,9 +1830,8 @@ class _TreatmentPageState extends State<TreatmentPage> {
         children: [
           Container(
             width: double.infinity,
-            height: 420,
             decoration: BoxDecoration(
-              color: Colors.grey.shade50,
+              color: Colors.white,
               borderRadius: BorderRadius.circular(24),
               border: Border.all(color: Colors.grey.shade100, width: 1.5),
             ),
@@ -2058,7 +1843,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      width: 160,
+                      width: 120,
                       height: 16,
                       decoration: BoxDecoration(
                         color: Colors.grey.shade200,
@@ -2066,105 +1851,71 @@ class _TreatmentPageState extends State<TreatmentPage> {
                       ),
                     ),
                     Container(
-                      width: 60,
-                      height: 20,
+                      width: 70,
+                      height: 22,
                       decoration: BoxDecoration(
                         color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                Container(
-                  width: 80,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: 200,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 Container(
                   width: 140,
-                  height: 12,
+                  height: 14,
                   decoration: BoxDecoration(
                     color: Colors.grey.shade200,
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                const SizedBox(height: 24),
-                Divider(height: 1, color: Colors.grey.shade200),
-                const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
+                const Divider(
+                  height: 24,
+                  thickness: 1,
+                  color: Color(0xFFF1F5F9),
+                ),
+                for (int i = 0; i < 3; i++) ...[
+                  Row(
+                    children: [
+                      Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 100,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 22),
+                    child: Container(
+                      width: 140,
+                      height: 14,
                       decoration: BoxDecoration(
                         color: Colors.grey.shade200,
-                        shape: BoxShape.circle,
+                        borderRadius: BorderRadius.circular(4),
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 100,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade200,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Container(
-                          width: 80,
-                          height: 16,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade200,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Container(
-                  width: double.infinity,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(16),
                   ),
-                ),
+                  if (i < 2) const SizedBox(height: 16),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 24),
-
           Container(
-            width: 120,
+            width: 100,
             height: 16,
             decoration: BoxDecoration(
               color: Colors.grey.shade200,
@@ -2172,24 +1923,46 @@ class _TreatmentPageState extends State<TreatmentPage> {
             ),
           ),
           const SizedBox(height: 12),
-
+          for (int i = 0; i < 2; i++) ...[
+            Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade100, width: 1.5),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           Container(
-            height: 64,
+            width: 80,
+            height: 16,
             decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(4),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 4),
           Container(
-            height: 64,
+            width: 220,
+            height: 12,
             decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(4),
             ),
           ),
+          const SizedBox(height: 16),
+          for (int i = 0; i < 2; i++) ...[
+            Container(
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade100, width: 1.5),
+              ),
+            ),
+            if (i < 1) const SizedBox(height: 12),
+          ],
         ],
       ),
     );
