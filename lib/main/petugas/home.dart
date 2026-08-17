@@ -715,17 +715,20 @@ class _StaffHomePageState extends State<StaffHomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        title: Text(
-          'TB Care - Petugas',
-          style: TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
+      appBar:
+          _selectedIndex == 0
+              ? AppBar(
+                backgroundColor: AppColors.background,
+                elevation: 0,
+                title: Text(
+                  'TB Care',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              )
+              : null,
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,

@@ -1,10 +1,7 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:flutter/foundation.dart';
-// ignore: unused_import
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:apk_tb_care/main/pasien/home.dart';
 import 'package:apk_tb_care/main/petugas/home.dart';
 import 'package:apk_tb_care/main/login.dart';
@@ -14,6 +11,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:apk_tb_care/services/notification_service.dart';
+import 'package:apk_tb_care/main/pasien/materi_detail.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -32,98 +31,16 @@ void main() async {
   }
 
   await Firebase.initializeApp();
-  await AndroidAlarmManager.initialize();
 
-  await AndroidAlarmManager.periodic(
-    const Duration(minutes: 30),
-    1001,
-    checkEducationBackground,
-    wakeup: true,
-    exact: true,
-    rescheduleOnReboot: true,
-  );
+  // Inisialisasi Notification Service Global
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+
+  await AndroidAlarmManager.initialize();
 
   await initializeDateFormatting('id_ID', '');
 
-  // REQUEST PERMISSION NOTIFIKASI (ANDROID 13+)
-  final FlutterLocalNotificationsPlugin notificationsPlugin =
-      FlutterLocalNotificationsPlugin();
-
-  await notificationsPlugin
-      .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin
-      >()
-      ?.requestNotificationsPermission();
-
   runApp(const MainApp());
-}
-
-@pragma('vm:entry-point')
-Future<void> checkEducationBackground() async {
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('token');
-
-  if (token == null) return;
-
-  try {
-    final response = await http.get(
-      Uri.parse('${Connection.BASE_URL}/education'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
-
-    if (response.statusCode != 200) return;
-
-    final data = jsonDecode(response.body);
-    final List materials = data['data'];
-
-    if (materials.isEmpty) return;
-
-    // Ambil materi terbaru
-    materials.sort(
-      (a, b) => DateTime.parse(
-        b['created_at'],
-      ).compareTo(DateTime.parse(a['created_at'])),
-    );
-
-    final newest = materials.first;
-
-    if (newest['is_publish'] != 1) return;
-
-    final lastSeen = prefs.getString('last_education_time');
-    final createdAt = DateTime.parse(newest['created_at']);
-
-    if (lastSeen == null || createdAt.isAfter(DateTime.parse(lastSeen))) {
-      final FlutterLocalNotificationsPlugin notifications =
-          FlutterLocalNotificationsPlugin();
-
-      const AndroidInitializationSettings initSettings =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-
-      await notifications.initialize(
-        const InitializationSettings(android: initSettings),
-      );
-
-      const AndroidNotificationDetails androidDetails =
-          AndroidNotificationDetails(
-            'education_channel',
-            'Edukasi TB Care',
-            importance: Importance.max,
-            priority: Priority.high,
-          );
-
-      await notifications.show(
-        0,
-        "Materi Edukasi Baru",
-        newest['title_material'],
-        const NotificationDetails(android: androidDetails),
-        payload: newest['id'].toString(),
-      );
-
-      await prefs.setString("last_education_time", createdAt.toIso8601String());
-    }
-  } catch (e) {
-    debugPrint("Background check error: $e");
-  }
 }
 
 /// =============================================================
@@ -199,6 +116,22 @@ class _MainAppState extends State<MainApp> {
     else {
       _setStartPage(StaffHomePage(name: userName));
     }
+
+    // Daftarkan/upload token FCM saat session dikonfirmasi valid
+    NotificationService().getAndUploadToken();
+
+    // Periksa apakah ada pending notifikasi setelah widget terpasang
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (NotificationService.pendingMaterialId != null) {
+        final id = NotificationService.pendingMaterialId!;
+        NotificationService.pendingMaterialId = null;
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (context) => MateriDetailPage(materialId: id),
+          ),
+        );
+      }
+    });
   }
 
   /// ===========================================================
@@ -246,6 +179,7 @@ class _MainAppState extends State<MainApp> {
 
     return MaterialApp(
       title: 'TB Care',
+      navigatorKey: navigatorKey, // Gunakan navigatorKey global untuk routing
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primaryColor: Colors.blue[100],

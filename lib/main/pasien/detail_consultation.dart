@@ -37,7 +37,7 @@ class _ConsultationDetailPageState extends State<ConsultationDetailPage> {
   @override
   void initState() {
     super.initState();
-     widget.service.isConsultationDetailOpen = true;
+    widget.service.isConsultationDetailOpen = true;
     _loadInitialData();
     _setupRealtimeListeners();
 

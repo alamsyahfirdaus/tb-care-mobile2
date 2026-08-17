@@ -15,6 +15,7 @@ import 'package:apk_tb_care/connection.dart';
 import 'package:apk_tb_care/register.dart';
 import 'package:apk_tb_care/main/pasien/home.dart';
 import 'package:apk_tb_care/main/petugas/home.dart';
+import 'package:apk_tb_care/services/notification_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -87,6 +88,9 @@ class _LoginPageState extends State<LoginPage> {
       if (user['user_type_id'] == 2) {
         await prefs.setString('patient_id', user['patient']['id'].toString());
       }
+
+      // Upload FCM token ke server setelah login sukses
+      NotificationService().getAndUploadToken();
 
       if (!mounted) return;
       _goToHome(prefs, user['user_type_id']);

@@ -502,7 +502,7 @@ class _HomePageState extends State<HomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Selamat Datang',
+                  'Selamat Datang,',
                   style: GoogleFonts.plusJakartaSans(
                     color: Colors.grey.shade600,
                     fontSize: 13,
@@ -548,6 +548,30 @@ class _HomePageState extends State<HomePage> {
     final treatmentStatus = treatment['treatment_status'] ?? 'Berjalan';
     final treatmentTypeId = treatment['treatment_type_id'];
 
+    String formattedDates = '';
+    try {
+      if (treatment['start_date'] != null && treatment['end_date'] != null) {
+        final start = DateTime.parse(treatment['start_date']);
+        final end = DateTime.parse(treatment['end_date']);
+        final startStr = DateFormat('d MMMM yyyy', 'id_ID').format(start);
+        final endStr = DateFormat('d MMMM yyyy', 'id_ID').format(end);
+        formattedDates = '$startStr s.d. $endStr';
+      }
+    } catch (e) {
+      formattedDates =
+          '${treatment['start_date'] ?? '--'} s.d. ${treatment['end_date'] ?? '--'}';
+    }
+
+    final isStatusBerjalan = treatmentStatus == 'Berjalan';
+    final isStatusSelesai = treatmentStatus == 'Selesai';
+
+    final badgeColor =
+        isStatusBerjalan
+            ? const Color(0xFF10B981) // Green
+            : isStatusSelesai
+            ? const Color(0xFF3B82F6) // Blue
+            : const Color(0xFFF59E0B); // Amber/Warning
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -575,48 +599,52 @@ class _HomePageState extends State<HomePage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: .16),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.medication_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    'Status Pengobatan',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
+              Text(
+                'Pengobatan TB',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+                  horizontal: 10,
+                  vertical: 4,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: Colors.white30, width: 1),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                child: Text(
-                  treatmentStatus,
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isStatusBerjalan
+                          ? Icons.play_circle_fill_rounded
+                          : isStatusSelesai
+                          ? Icons.check_circle_rounded
+                          : Icons.help_rounded,
+                      size: 12,
+                      color: badgeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      treatmentStatus,
+                      style: GoogleFonts.plusJakartaSans(
+                        color: badgeColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -648,7 +676,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               Text(
-                '$percent% Selesai',
+                '$percent% selesai',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -675,17 +703,21 @@ class _HomePageState extends State<HomePage> {
           Row(
             children: [
               const Icon(
-                Icons.date_range_rounded,
+                Icons.calendar_month_rounded,
                 color: Colors.white70,
                 size: 14,
               ),
-              const SizedBox(width: 6),
-              Text(
-                '${treatment['start_date']} s.d. ${treatment['end_date']}',
-                style: GoogleFonts.plusJakartaSans(
-                  color: Colors.white70,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  formattedDates,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white.withValues(alpha: 0.8),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -1430,15 +1462,15 @@ class _HomePageState extends State<HomePage> {
                     color: Colors.grey.shade800,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Pilih metode pengambilan foto bukti minum obat',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: Colors.grey.shade500,
-                  ),
-                ),
+                // const SizedBox(height: 6),
+                // Text(
+                //   'Pilih metode pengambilan foto bukti minum obat',
+                //   textAlign: TextAlign.center,
+                //   style: GoogleFonts.plusJakartaSans(
+                //     fontSize: 12,
+                //     color: Colors.grey.shade500,
+                //   ),
+                // ),
                 const SizedBox(height: 20),
                 ListTile(
                   leading: Container(
@@ -1501,38 +1533,38 @@ class _HomePageState extends State<HomePage> {
                     }
                   },
                 ),
-                Divider(color: Colors.grey.shade100, height: 1),
+                // Divider(color: Colors.grey.shade100, height: 1),
                 const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Konfirmasi tanpa foto belum tersedia. Silakan unggah foto sebagai bukti minum obat.',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        backgroundColor: Colors.orangeAccent,
-                      ),
-                    );
-                  },
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(
-                    'Tanpa Foto',
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
+                // TextButton(
+                //   onPressed: () {
+                //     Navigator.pop(context);
+                //     ScaffoldMessenger.of(context).showSnackBar(
+                //       SnackBar(
+                //         content: Text(
+                //           'Konfirmasi tanpa foto belum tersedia. Silakan unggah foto sebagai bukti minum obat.',
+                //           style: GoogleFonts.plusJakartaSans(
+                //             fontWeight: FontWeight.w500,
+                //           ),
+                //         ),
+                //         backgroundColor: Colors.orangeAccent,
+                //       ),
+                //     );
+                //   },
+                //   style: TextButton.styleFrom(
+                //     padding: const EdgeInsets.symmetric(vertical: 14),
+                //     shape: RoundedRectangleBorder(
+                //       borderRadius: BorderRadius.circular(14),
+                //     ),
+                //   ),
+                //   child: Text(
+                //     'Tanpa Foto',
+                //     style: GoogleFonts.plusJakartaSans(
+                //       color: Colors.grey.shade600,
+                //       fontWeight: FontWeight.bold,
+                //       fontSize: 14,
+                //     ),
+                //   ),
+                // ),
               ],
             ),
           ),
@@ -1919,20 +1951,23 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
-        title: Text(
-          'TB Care',
-          style: GoogleFonts.plusJakartaSans(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
-          ),
-        ),
-      ),
+      appBar:
+          _selectedIndex == 0
+              ? AppBar(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                systemOverlayStyle: SystemUiOverlayStyle.light,
+                title: Text(
+                  'TB Care',
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  ),
+                ),
+              )
+              : null,
       body: IndexedStack(
         index: _selectedIndex,
         children: [

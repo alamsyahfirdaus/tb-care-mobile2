@@ -575,9 +575,12 @@ class _EditPatientPageState extends State<EditPatientPage> {
                         child: ElevatedButton(
                           onPressed: _submitForm,
                           // ignore: sort_child_properties_last
-                          child: Text('Simpan Perubahan', style: TextStyle(color: Colors.white),),
+                          child: Text(
+                            'Simpan Perubahan',
+                            style: TextStyle(color: Colors.white),
+                          ),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue
+                            backgroundColor: Colors.blue,
                           ),
                         ),
                       ),
