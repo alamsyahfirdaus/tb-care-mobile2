@@ -522,6 +522,7 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
   final _formKey = GlobalKey<FormState>();
 
   final nama = TextEditingController();
+  final nik = TextEditingController();
   final hp = TextEditingController();
   final puskesmasController = TextEditingController();
 
@@ -533,6 +534,7 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
   @override
   void dispose() {
     nama.dispose();
+    nik.dispose();
     hp.dispose();
     puskesmasController.dispose();
     super.dispose();
@@ -546,13 +548,18 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
     });
 
     try {
-      final response = await submitRegister({
+      final Map<String, dynamic> payload = {
         "user_type": "patient",
         "name": nama.text.trim(),
         "phone": hp.text.trim(),
         "gender": gender,
         "puskesmas_id": puskesmas,
-      });
+      };
+      if (nik.text.trim().isNotEmpty) {
+        payload["nik"] = nik.text.trim();
+      }
+
+      final response = await submitRegister(payload);
 
       Map<String, dynamic> result;
 
@@ -651,6 +658,31 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
                     if (value == null || value.trim().isEmpty) {
                       return "Nama wajib diisi";
                     }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: nik,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(16),
+                  ],
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                  decoration: buildInputDecoration(
+                    labelText: "NIK (Opsional)",
+                    hintText: "Masukkan 16 digit NIK jika ada",
+                    prefixIcon: Icons.badge_outlined,
+                  ),
+                  validator: (value) {
+                    final valueNik = value?.trim() ?? "";
+
+                    if (valueNik.isNotEmpty && valueNik.length != 16) {
+                      return "NIK harus terdiri dari 16 digit";
+                    }
+
                     return null;
                   },
                 ),

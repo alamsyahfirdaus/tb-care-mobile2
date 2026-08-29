@@ -375,8 +375,8 @@ class _TreatmentPageState extends State<TreatmentPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.primary,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
         elevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle.light,
         title: Text(
@@ -384,7 +384,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
           style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.bold,
             fontSize: 18,
-            color: AppColors.primary,
+            // color: AppColors.primary,
           ),
         ),
         // actions: [

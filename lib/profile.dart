@@ -821,20 +821,20 @@ class _ProfilePageState extends State<ProfilePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.primary,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
           'Profil Saya',
           style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.bold,
-            color: AppColors.primary,
+            // color: AppColors.primary,
             fontSize: 18,
           ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit_outlined, color: AppColors.primary),
+            icon: const Icon(Icons.edit_outlined, color: Colors.white),
             onPressed: () {
               Navigator.push(
                 context,

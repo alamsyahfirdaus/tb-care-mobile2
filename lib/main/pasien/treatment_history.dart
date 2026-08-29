@@ -102,7 +102,7 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
           'Riwayat Pengobatan',
           style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.bold,
-            fontSize: 16,
+            fontSize: 18,
             color: Colors.white,
           ),
         ),
