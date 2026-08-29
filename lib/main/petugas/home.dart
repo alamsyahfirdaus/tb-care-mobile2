@@ -390,24 +390,50 @@ class _StaffHomePageState extends State<StaffHomePage> {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            'Selamat Datang,',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Colors.white.withValues(alpha: 0.85),
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.person_rounded,
+                color: Colors.white,
+                size: 28,
+              ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            widget.name,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Selamat Datang,',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -418,64 +444,97 @@ class _StaffHomePageState extends State<StaffHomePage> {
   Widget _buildQuickStats() {
     if (_isPatientsLoading) {
       return Row(
-        children:
-            List.generate(
-                  3,
-                  (index) => Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 16,
-                        horizontal: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.grey.shade100,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Container(
-                            width: 36,
-                            height: 16,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Container(
-                            width: 50,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                        ],
-                      ),
+        children: [
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.grey.shade100,
+                  width: 1.5,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
                     ),
                   ),
-                )
-                .map(
-                  (w) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: w,
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 48,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
-                )
-                .toList(),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 70,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Colors.grey.shade100,
+                  width: 1.5,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    width: 48,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: 70,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -516,40 +575,23 @@ class _StaffHomePageState extends State<StaffHomePage> {
           }
         }).length;
 
-    // Count active treatments: status "Berjalan"
-    final activeTreatmentsCount =
-        _patientData.where((patient) {
-          final treatment = _getActiveTreatment(patient);
-          return treatment != null &&
-              treatment['treatment_status'] == 'Berjalan';
-        }).length;
-
     return Row(
       children: [
         Expanded(
           child: _buildStatCard(
             value: totalPatients.toString(),
             label: 'Total Pasien',
-            icon: Icons.group_outlined,
-            color: Colors.blue.shade600,
+            icon: Icons.people_alt_outlined,
+            color: AppColors.primary,
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         Expanded(
           child: _buildStatCard(
             value: newPatientsCount.toString(),
             label: 'Pasien Baru',
             icon: Icons.person_add_outlined,
             color: Colors.green.shade600,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: _buildStatCard(
-            value: activeTreatmentsCount.toString(),
-            label: 'Pengobatan Aktif',
-            icon: Icons.medical_services_outlined,
-            color: Colors.orange.shade600,
           ),
         ),
       ],
@@ -563,15 +605,14 @@ class _StaffHomePageState extends State<StaffHomePage> {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade100, width: 1.5),
         boxShadow: [
           BoxShadow(
-            // ignore: deprecated_member_use
-            color: Colors.black.withOpacity(0.01),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -581,19 +622,18 @@ class _StaffHomePageState extends State<StaffHomePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(6),
+            padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              // ignore: deprecated_member_use
-              color: color.withOpacity(0.1),
+              color: color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: color, size: 16),
+            child: Icon(icon, color: color, size: 18),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
             value,
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 20,
+              fontSize: 22,
               fontWeight: FontWeight.bold,
               color: AppColors.text,
             ),
@@ -602,9 +642,9 @@ class _StaffHomePageState extends State<StaffHomePage> {
           Text(
             label,
             style: GoogleFonts.plusJakartaSans(
-              fontSize: 10,
-              color: Colors.grey[500],
-              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontWeight: FontWeight.w600,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1854,16 +1894,14 @@ class _StaffHomePageState extends State<StaffHomePage> {
       appBar:
           _selectedIndex == 0
               ? AppBar(
-                backgroundColor: Colors.white,
+                backgroundColor: AppColors.primary,
                 elevation: 0,
                 centerTitle: false,
                 title: Text(
                   'TB Care',
                   style: GoogleFonts.plusJakartaSans(
-                    color: AppColors.primary,
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                    letterSpacing: 0.5,
                   ),
                 ),
                 bottom: PreferredSize(
