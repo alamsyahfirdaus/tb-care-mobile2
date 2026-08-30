@@ -27,14 +27,10 @@ class StaffHomePage extends StatefulWidget {
 
 class _StaffHomePageState extends State<StaffHomePage> {
   int _selectedIndex = 0;
-  List<dynamic> _patientData = [];
-  List<Widget> get _pages => [
-    _buildStaffHomePage(),
-    PatientPage(),
-    EducationPage(isStaff: true),
-    ConsultationPage(isStaff: true),
-    ProfilePage(),
-  ];
+  List<Map<String, dynamic>> _patientData = [];
+
+  // Retain instances of tab pages to preserve state in IndexedStack
+  late final List<Widget> _navigationPages;
 
   double? _adherenceRate;
   bool _isAdherenceLoading = true;
@@ -46,9 +42,19 @@ class _StaffHomePageState extends State<StaffHomePage> {
   @override
   void initState() {
     super.initState();
+    _navigationPages = [
+      const PatientPage(),
+      const EducationPage(isStaff: true),
+      const ConsultationPage(isStaff: true),
+      const ProfilePage(),
+    ];
     _fetchPatientData();
     _fetchAdherenceRate();
   }
+
+  // ===========================================================================
+  // API & DATA FETCHING
+  // ===========================================================================
 
   Future<void> _fetchPatientData() async {
     if (!mounted) return;
@@ -69,15 +75,24 @@ class _StaffHomePageState extends State<StaffHomePage> {
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        Map<String, dynamic> dataJson = jsonDecode(response.body);
-        setState(() {
-          _patientData = List<Map<String, dynamic>>.from(dataJson['data']);
-          _isPatientsLoading = false;
-        });
+        final dynamic dataJson = jsonDecode(response.body);
+        if (dataJson is Map<String, dynamic> && dataJson['data'] is List) {
+          final list = dataJson['data'] as List;
+          setState(() {
+            _patientData = list.whereType<Map<String, dynamic>>().toList();
+            _isPatientsLoading = false;
+          });
+        } else {
+          setState(() {
+            _patientData = [];
+            _isPatientsLoading = false;
+          });
+        }
       } else {
-        throw Exception('Failed to load patient data');
+        throw Exception('Status code: ${response.statusCode}');
       }
     } catch (e) {
+      debugPrint('Error fetching patient data: $e');
       if (mounted) {
         setState(() {
           _isPatientsLoading = false;
@@ -85,7 +100,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Gagal memuat data pasien: ${e.toString()}'),
+            content: Text(
+              'Gagal memuat data pasien. Silakan coba lagi.',
+              style: GoogleFonts.plusJakartaSans(fontSize: 12),
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -112,10 +130,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        final dataJson = jsonDecode(response.body);
+        final dynamic dataJson = jsonDecode(response.body);
 
-        if (dataJson != null &&
-            dataJson['data'] != null &&
+        if (dataJson is Map<String, dynamic> &&
+            dataJson['data'] is Map<String, dynamic> &&
             dataJson['data']['adherence_average'] != null) {
           final rawValue =
               dataJson['data']['adherence_average']
@@ -137,38 +155,72 @@ class _StaffHomePageState extends State<StaffHomePage> {
           });
         }
       } else {
-        throw Exception('Failed to load adherence rate');
+        throw Exception('Status code: ${response.statusCode}');
       }
     } catch (e) {
+      debugPrint('Adherence API Error: $e');
       if (mounted) {
         setState(() {
           _isAdherenceLoading = false;
           _hasAdherenceError = true;
         });
-        debugPrint('Adherence API Error: $e');
       }
     }
   }
 
-  // Helper method to get the first active treatment or null
+  // ===========================================================================
+  // BUSINESS LOGIC & HELPERS
+  // ===========================================================================
+
+  /// Mendapatkan tanggal registrasi atau pendaftaran pasien.
+  /// Memeriksa field direct: created_at, registered_at, registration_date, diagnosis_date.
+  /// Jika tidak tersedia pada object pasien, fallback ke start_date pengobatan aktif/terkini.
+  DateTime? _getPatientRegistrationDate(Map<String, dynamic> patient) {
+    for (final key in [
+      'created_at',
+      'registered_at',
+      'registration_date',
+      'diagnosis_date',
+    ]) {
+      final val = patient[key];
+      if (val != null) {
+        final parsed = DateTime.tryParse(val.toString().trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    final treatment = _getLatestOrActiveTreatment(patient);
+    if (treatment != null && treatment['start_date'] != null) {
+      final parsed = DateTime.tryParse(
+        treatment['start_date'].toString().trim(),
+      );
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  /// Mendapatkan treatment yang sedang aktif ('Berjalan').
+  /// String status dinormalisasi (trim & lowercase) untuk menghindari kegagalan pencocokan.
   Map<String, dynamic>? _getActiveTreatment(Map<String, dynamic> patient) {
     final treatments = patient['treatments'];
-
     if (treatments is! List || treatments.isEmpty) {
       return null;
     }
 
     for (final treatment in treatments) {
-      if (treatment is Map<String, dynamic> &&
-          treatment['treatment_status'] == 'Berjalan') {
-        return treatment;
+      if (treatment is Map<String, dynamic>) {
+        final status =
+            treatment['treatment_status']?.toString().trim().toLowerCase();
+        if (status == 'berjalan') {
+          return treatment;
+        }
       }
     }
 
     return null;
   }
 
-  // Helper method to get the most relevant treatment (active or latest)
+  /// Mendapatkan satu treatment paling relevan (prioritas Berjalan, atau treatment terbaru).
+  /// Menghindari double-counting pasien dengan riwayat pengobatan majemuk.
   Map<String, dynamic>? _getLatestOrActiveTreatment(
     Map<String, dynamic> patient,
   ) {
@@ -186,7 +238,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
       if (t is Map<String, dynamic>) {
         final dateStr = t['start_date'];
         if (dateStr != null) {
-          final date = DateTime.tryParse(dateStr.toString());
+          final date = DateTime.tryParse(dateStr.toString().trim());
           if (date != null) {
             if (latestDate == null || date.isAfter(latestDate)) {
               latestDate = date;
@@ -202,7 +254,8 @@ class _StaffHomePageState extends State<StaffHomePage> {
             : null);
   }
 
-  // Helper method to parse combined visit date and time safely
+  /// Menggabungkan tanggal dan jam kunjungan secara aman.
+  /// Jika jam tidak tersedia, mengembalikan tanggal pada 00:00:00.
   DateTime? _parseVisitDateTime(dynamic date, dynamic time) {
     if (date == null) return null;
     try {
@@ -211,26 +264,12 @@ class _StaffHomePageState extends State<StaffHomePage> {
       final parsedDate = DateTime.parse(dateStr);
 
       if (time == null) {
-        return DateTime(
-          parsedDate.year,
-          parsedDate.month,
-          parsedDate.day,
-          23,
-          59,
-          59,
-        );
+        return DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
       }
 
       final timeStr = time.toString().trim();
       if (timeStr.isEmpty) {
-        return DateTime(
-          parsedDate.year,
-          parsedDate.month,
-          parsedDate.day,
-          23,
-          59,
-          59,
-        );
+        return DateTime(parsedDate.year, parsedDate.month, parsedDate.day);
       }
 
       final parts = timeStr.split(':');
@@ -255,7 +294,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
     }
   }
 
-  // Helper method to format medication time safely
+  /// Memformat jam minum obat (HH:mm).
   String _formatMedicationTime(dynamic value) {
     if (value == null) return "-";
     final str = value.toString().trim();
@@ -271,7 +310,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
     return str.length >= 5 ? str.substring(0, 5) : str;
   }
 
-  // Helper method to format gender safely
+  /// Memformat label jenis kelamin.
   String _formatGender(dynamic value) {
     if (value == null) return "-";
     final str = value.toString().trim().toUpperCase();
@@ -280,10 +319,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
     } else if (str == 'P') {
       return 'Perempuan';
     }
-    return "-";
+    return str.isNotEmpty ? str : "-";
   }
 
-  // Helper method to calculate treatment progress safely
+  /// Menghitung progress pengobatan secara akurat dan clamped [0.0, 1.0].
   Map<String, dynamic> _calculateTreatmentProgress(
     Map<String, dynamic>? treatment,
   ) {
@@ -298,8 +337,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
       };
     }
     try {
-      final startDate = DateTime.parse(treatment['start_date']);
-      final endDate = DateTime.parse(treatment['end_date']);
+      final startDate = DateTime.parse(
+        treatment['start_date'].toString().trim(),
+      );
+      final endDate = DateTime.parse(treatment['end_date'].toString().trim());
 
       if (startDate.isAfter(endDate)) {
         return {
@@ -311,22 +352,38 @@ class _StaffHomePageState extends State<StaffHomePage> {
       }
 
       final totalDays = endDate.difference(startDate).inDays;
-      final today = DateTime.now();
+      if (totalDays <= 0) {
+        return {
+          'hasDates': true,
+          'daysPassed': 1,
+          'totalDays': 1,
+          'progress': 1.0,
+        };
+      }
+
+      final now = DateTime.now();
+      final todayMidnight = DateTime(now.year, now.month, now.day);
+      final startMidnight = DateTime(
+        startDate.year,
+        startDate.month,
+        startDate.day,
+      );
+      final endMidnight = DateTime(endDate.year, endDate.month, endDate.day);
 
       int daysPassed = 0;
       double progress = 0.0;
 
-      if (today.isBefore(startDate)) {
+      if (todayMidnight.isBefore(startMidnight)) {
         daysPassed = 0;
         progress = 0.0;
-      } else if (today.isAfter(endDate)) {
+      } else if (todayMidnight.isAfter(endMidnight)) {
         daysPassed = totalDays;
         progress = 1.0;
       } else {
-        daysPassed = today.difference(startDate).inDays;
-        daysPassed = daysPassed.clamp(0, totalDays);
-        progress = totalDays > 0 ? daysPassed / totalDays : 0.0;
-        progress = progress.clamp(0.0, 1.0);
+        // Hari ke-1 dimulai pada tanggal mulai pengobatan
+        daysPassed = todayMidnight.difference(startMidnight).inDays + 1;
+        daysPassed = daysPassed.clamp(1, totalDays);
+        progress = (daysPassed / totalDays).clamp(0.0, 1.0);
       }
 
       return {
@@ -401,11 +458,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
               shape: BoxShape.circle,
             ),
             child: const Center(
-              child: Icon(
-                Icons.person_rounded,
-                color: Colors.white,
-                size: 28,
-              ),
+              child: Icon(Icons.person_rounded, color: Colors.white, size: 28),
             ),
           ),
           const SizedBox(width: 16),
@@ -447,42 +500,46 @@ class _StaffHomePageState extends State<StaffHomePage> {
         children: [
           Expanded(
             child: Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.grey.shade100,
-                  width: 1.5,
-                ),
+                border: Border.all(color: Colors.grey.shade100, width: 1.5),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
                   Container(
-                    width: 34,
-                    height: 34,
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
                       color: Colors.grey[100],
                       shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: 48,
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    width: 70,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(4),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          width: 55,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -492,42 +549,46 @@ class _StaffHomePageState extends State<StaffHomePage> {
           const SizedBox(width: 12),
           Expanded(
             child: Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Colors.grey.shade100,
-                  width: 1.5,
-                ),
+                border: Border.all(color: Colors.grey.shade100, width: 1.5),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
                   Container(
-                    width: 34,
-                    height: 34,
+                    width: 36,
+                    height: 36,
                     decoration: BoxDecoration(
                       color: Colors.grey[100],
                       shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Container(
-                    width: 48,
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    width: 70,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(4),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          width: 55,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[100],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -552,27 +613,20 @@ class _StaffHomePageState extends State<StaffHomePage> {
 
     final totalPatients = _patientData.length;
 
-    // Count new patients: 0 <= difference in days <= 30, ignore future dates
+    // Menghitung pasien baru berdasarkan tanggal registrasi/mulai (0 <= diffDays <= 30)
     final newPatientsCount =
         _patientData.where((patient) {
-          final treatment = _getActiveTreatment(patient);
-          if (treatment == null || treatment['start_date'] == null) {
-            return false;
-          }
-          try {
-            final startDate = DateTime.parse(treatment['start_date']);
-            final now = DateTime.now();
-            final startMidnight = DateTime(
-              startDate.year,
-              startDate.month,
-              startDate.day,
-            );
-            final nowMidnight = DateTime(now.year, now.month, now.day);
-            final diffDays = nowMidnight.difference(startMidnight).inDays;
-            return diffDays >= 0 && diffDays <= 30;
-          } catch (e) {
-            return false;
-          }
+          final regDate = _getPatientRegistrationDate(patient);
+          if (regDate == null) return false;
+          final now = DateTime.now();
+          final regMidnight = DateTime(
+            regDate.year,
+            regDate.month,
+            regDate.day,
+          );
+          final nowMidnight = DateTime(now.year, now.month, now.day);
+          final diffDays = nowMidnight.difference(regMidnight).inDays;
+          return diffDays >= 0 && diffDays <= 30;
         }).length;
 
     return Row(
@@ -605,7 +659,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -618,8 +672,8 @@ class _StaffHomePageState extends State<StaffHomePage> {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             padding: const EdgeInsets.all(8),
@@ -627,27 +681,36 @@ class _StaffHomePageState extends State<StaffHomePage> {
               color: color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: color, size: 18),
+            child: Icon(icon, color: color, size: 20),
           ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: AppColors.text,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  value,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.text,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  label,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w600,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -880,8 +943,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      // ignore: deprecated_member_use
-                      color: statusColor.withOpacity(0.1),
+                      color: statusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -1006,21 +1068,15 @@ class _StaffHomePageState extends State<StaffHomePage> {
       );
     }
 
-    // Sort patients by most recent treatment start date
-    final sortedPatients = List.from(_patientData);
+    // Urutkan pasien berdasarkan tanggal pendaftaran/pengobatan terbaru
+    final sortedPatients = List<Map<String, dynamic>>.from(_patientData);
     sortedPatients.sort((a, b) {
-      final treatmentA = _getActiveTreatment(a);
-      final treatmentB = _getActiveTreatment(b);
+      final dateA = _getPatientRegistrationDate(a);
+      final dateB = _getPatientRegistrationDate(b);
 
-      final dateA =
-          treatmentA?['start_date'] != null
-              ? DateTime.tryParse(treatmentA?['start_date']) ?? DateTime(1970)
-              : DateTime(1970);
-
-      final dateB =
-          treatmentB?['start_date'] != null
-              ? DateTime.tryParse(treatmentB?['start_date']) ?? DateTime(1970)
-              : DateTime(1970);
+      if (dateA == null && dateB == null) return 0;
+      if (dateA == null) return 1;
+      if (dateB == null) return -1;
 
       return dateB.compareTo(dateA);
     });
@@ -1044,7 +1100,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
             TextButton(
               onPressed: () {
                 setState(() {
-                  _selectedIndex = 1; // Navigate to patient list
+                  _selectedIndex = 1; // Navigasi ke daftar pasien
                 });
               },
               child: Text(
@@ -1100,57 +1156,60 @@ class _StaffHomePageState extends State<StaffHomePage> {
   Widget _buildPatientCard(Map<String, dynamic> patient) {
     final treatment = _getActiveTreatment(patient);
 
-    // Calculate treatment progress using helper
     final progressData = _calculateTreatmentProgress(treatment);
     final bool hasDates = progressData['hasDates'];
     final int daysPassed = progressData['daysPassed'];
     final int totalDays = progressData['totalDays'];
     final double progress = progressData['progress'];
 
-    // Get next visit if available, combined & sorted using helper
     String nextVisitDate = '--/--';
     String nextVisitTime = '--:--';
 
-    if (treatment != null &&
-        treatment['visits'] != null &&
-        treatment['visits'] is List) {
+    if (treatment != null && treatment['visits'] is List) {
       final List<dynamic> visitsList = treatment['visits'];
       final parsedVisits = <Map<String, dynamic>>[];
 
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day);
+
       for (var visit in visitsList) {
-        if (visit == null) continue;
-        final visitDT = _parseVisitDateTime(
-          visit['visit_date'],
-          visit['visit_time'],
-        );
-        if (visitDT != null) {
-          parsedVisits.add({'visit': visit, 'dateTime': visitDT});
+        if (visit is Map<String, dynamic>) {
+          final hasTime =
+              visit['visit_time'] != null &&
+              visit['visit_time'].toString().trim().isNotEmpty;
+          final visitDT = _parseVisitDateTime(
+            visit['visit_date'],
+            visit['visit_time'],
+          );
+          if (visitDT != null) {
+            final isUpcoming =
+                hasTime ? visitDT.isAfter(now) : !visitDT.isBefore(todayStart);
+            if (isUpcoming) {
+              parsedVisits.add({
+                'visit': visit,
+                'dateTime': visitDT,
+                'hasTime': hasTime,
+              });
+            }
+          }
         }
       }
 
-      final now = DateTime.now();
-      final upcomingVisits =
-          parsedVisits.where((pv) {
-            final dt = pv['dateTime'] as DateTime;
-            return dt.isAfter(now);
-          }).toList();
-
-      upcomingVisits.sort((a, b) {
+      parsedVisits.sort((a, b) {
         final dtA = a['dateTime'] as DateTime;
         final dtB = b['dateTime'] as DateTime;
         return dtA.compareTo(dtB);
       });
 
-      if (upcomingVisits.isNotEmpty) {
-        final nextVisitData = upcomingVisits.first;
-        final nextVisit = nextVisitData['visit'];
-        final nextVisitDT = nextVisitData['dateTime'] as DateTime;
+      if (parsedVisits.isNotEmpty) {
+        final next = parsedVisits.first;
+        final nextVisitDT = next['dateTime'] as DateTime;
+        final hasTime = next['hasTime'] as bool;
 
         try {
           nextVisitDate = DateFormat('dd/MM').format(nextVisitDT);
-          if (nextVisit['visit_time'] != null) {
-            nextVisitTime = DateFormat('HH:mm').format(nextVisitDT);
-          }
+          nextVisitTime =
+              hasTime ? DateFormat('HH:mm').format(nextVisitDT) : '--:--';
         } catch (e) {
           debugPrint('Error formatting next visit: $e');
         }
@@ -1238,8 +1297,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
         border: Border.all(color: Colors.grey.shade100, width: 1.5),
         boxShadow: [
           BoxShadow(
-            // ignore: deprecated_member_use
-            color: Colors.black.withOpacity(0.01),
+            color: Colors.black.withValues(alpha: 0.01),
             blurRadius: 6,
             offset: const Offset(0, 3),
           ),
@@ -1260,8 +1318,9 @@ class _StaffHomePageState extends State<StaffHomePage> {
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      // ignore: deprecated_member_use
-                      backgroundColor: AppColors.primary.withOpacity(0.08),
+                      backgroundColor: AppColors.primary.withValues(
+                        alpha: 0.08,
+                      ),
                       child: Text(
                         patient['name']?.isNotEmpty == true
                             ? patient['name'][0].toUpperCase()
@@ -1339,16 +1398,17 @@ class _StaffHomePageState extends State<StaffHomePage> {
     Color bg = Colors.grey[100]!;
     Color text = Colors.grey[800]!;
 
-    if (status == 'Berjalan') {
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'berjalan') {
       bg = Colors.blue.shade50;
       text = Colors.blue.shade700;
-    } else if (status == 'Selesai') {
+    } else if (normalized == 'selesai') {
       bg = Colors.green.shade50;
       text = Colors.green.shade700;
-    } else if (status == 'Gagal') {
+    } else if (normalized == 'gagal') {
       bg = Colors.red.shade50;
       text = Colors.red.shade700;
-    } else if (status == 'Meninggal') {
+    } else if (normalized == 'meninggal') {
       bg = Colors.amber.shade50;
       text = Colors.amber.shade900;
     }
@@ -1393,25 +1453,24 @@ class _StaffHomePageState extends State<StaffHomePage> {
     int failedCount = 0;
     int deceasedCount = 0;
 
-    for (var patient in _patientData) {
-      if (patient != null && patient is Map<String, dynamic>) {
-        final treatment = _getLatestOrActiveTreatment(patient);
-        if (treatment != null && treatment['treatment_status'] != null) {
-          final status = treatment['treatment_status'].toString();
-          switch (status) {
-            case 'Berjalan':
-              activeCount++;
-              break;
-            case 'Selesai':
-              completedCount++;
-              break;
-            case 'Gagal':
-              failedCount++;
-              break;
-            case 'Meninggal':
-              deceasedCount++;
-              break;
-          }
+    for (final patient in _patientData) {
+      final treatment = _getLatestOrActiveTreatment(patient);
+      if (treatment != null && treatment['treatment_status'] != null) {
+        final status =
+            treatment['treatment_status'].toString().trim().toLowerCase();
+        switch (status) {
+          case 'berjalan':
+            activeCount++;
+            break;
+          case 'selesai':
+            completedCount++;
+            break;
+          case 'gagal':
+            failedCount++;
+            break;
+          case 'meninggal':
+            deceasedCount++;
+            break;
         }
       }
     }
@@ -1423,8 +1482,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
         border: Border.all(color: Colors.grey.shade100, width: 1.5),
         boxShadow: [
           BoxShadow(
-            // ignore: deprecated_member_use
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -1451,25 +1509,21 @@ class _StaffHomePageState extends State<StaffHomePage> {
                   value: activeCount.toString(),
                   label: 'Aktif',
                   color: Colors.blue.shade600,
-                  icon: Icons.play_arrow_rounded,
                 ),
                 _buildMiniStatCard(
                   value: completedCount.toString(),
                   label: 'Selesai',
                   color: Colors.green.shade600,
-                  icon: Icons.check_circle_outline_rounded,
                 ),
                 _buildMiniStatCard(
                   value: failedCount.toString(),
                   label: 'Gagal',
                   color: Colors.red.shade600,
-                  icon: Icons.cancel_outlined,
                 ),
                 _buildMiniStatCard(
                   value: deceasedCount.toString(),
                   label: 'Meninggal',
                   color: Colors.amber.shade700,
-                  icon: Icons.bed_outlined,
                 ),
               ],
             ),
@@ -1483,38 +1537,27 @@ class _StaffHomePageState extends State<StaffHomePage> {
     required String value,
     required String label,
     required Color color,
-    required IconData icon,
   }) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 48,
-          height: 48,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            // ignore: deprecated_member_use
-            color: color.withOpacity(0.08),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: color, size: 20),
-        ),
-        const SizedBox(height: 8),
         Text(
           value,
           style: GoogleFonts.plusJakartaSans(
-            fontSize: 16,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
-            color: AppColors.text,
+            color: color,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 4),
         Text(
           label,
           style: GoogleFonts.plusJakartaSans(
             fontSize: 11,
-            color: Colors.grey[500],
-            fontWeight: FontWeight.bold,
+            color: Colors.grey[600],
+            fontWeight: FontWeight.w600,
           ),
+          textAlign: TextAlign.center,
         ),
       ],
     );
@@ -1528,14 +1571,14 @@ class _StaffHomePageState extends State<StaffHomePage> {
       isScrollControlled: true,
       isDismissible: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
+      builder: (sheetContext) {
         return Container(
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
           ),
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
@@ -1567,7 +1610,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.close_rounded),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(sheetContext),
                     ),
                   ],
                 ),
@@ -1585,8 +1628,9 @@ class _StaffHomePageState extends State<StaffHomePage> {
                     children: [
                       CircleAvatar(
                         radius: 26,
-                        // ignore: deprecated_member_use
-                        backgroundColor: AppColors.primary.withOpacity(0.1),
+                        backgroundColor: AppColors.primary.withValues(
+                          alpha: 0.1,
+                        ),
                         child: Text(
                           patient['name']?.isNotEmpty == true
                               ? patient['name'][0].toUpperCase()
@@ -1685,7 +1729,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                           ),
                         ),
                         onPressed: () {
-                          Navigator.pop(context);
+                          Navigator.pop(sheetContext);
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -1694,8 +1738,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
                                       EditPatientPage(patientId: patient['id']),
                             ),
                           ).then((_) {
-                            _fetchPatientData();
-                            _fetchAdherenceRate();
+                            if (mounted) {
+                              _fetchPatientData();
+                              _fetchAdherenceRate();
+                            }
                           });
                         },
                       ),
@@ -1720,14 +1766,17 @@ class _StaffHomePageState extends State<StaffHomePage> {
                           elevation: 0,
                         ),
                         onPressed: () {
-                          Navigator.pop(context);
+                          Navigator.pop(sheetContext);
                           Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (context) {
-                                if (treatment != null &&
-                                    treatment['treatment_status'] ==
-                                        'Berjalan') {
+                                final status =
+                                    treatment?['treatment_status']
+                                        ?.toString()
+                                        .trim()
+                                        .toLowerCase();
+                                if (treatment != null && status == 'berjalan') {
                                   return TreatmentManagementPage(
                                     patientId: patient['id'],
                                     patientName: patient['name'] ?? 'Pasien',
@@ -1757,8 +1806,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
                               },
                             ),
                           ).then((_) {
-                            _fetchPatientData();
-                            _fetchAdherenceRate();
+                            if (mounted) {
+                              _fetchPatientData();
+                              _fetchAdherenceRate();
+                            }
                           });
                         },
                       ),
@@ -1788,7 +1839,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                             elevation: 0,
                           ),
                           onPressed: () {
-                            Navigator.pop(context);
+                            Navigator.pop(sheetContext);
                             Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -1800,8 +1851,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
                                     ),
                               ),
                             ).then((_) {
-                              _fetchPatientData();
-                              _fetchAdherenceRate();
+                              if (mounted) {
+                                _fetchPatientData();
+                                _fetchAdherenceRate();
+                              }
                             });
                           },
                         ),
@@ -1821,7 +1874,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
                             elevation: 0,
                           ),
                           onPressed: () {
-                            Navigator.pop(context);
+                            Navigator.pop(sheetContext);
                             Navigator.push(
                               context,
                               MaterialPageRoute(
@@ -1832,8 +1885,10 @@ class _StaffHomePageState extends State<StaffHomePage> {
                                     ),
                               ),
                             ).then((_) {
-                              _fetchPatientData();
-                              _fetchAdherenceRate();
+                              if (mounted) {
+                                _fetchPatientData();
+                                _fetchAdherenceRate();
+                              }
                             });
                           },
                         ),
@@ -1910,7 +1965,16 @@ class _StaffHomePageState extends State<StaffHomePage> {
                 ),
               )
               : null,
-      body: IndexedStack(index: _selectedIndex, children: _pages),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildStaffHomePage(),
+          _navigationPages[0],
+          _navigationPages[1],
+          _navigationPages[2],
+          _navigationPages[3],
+        ],
+      ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           boxShadow: [
