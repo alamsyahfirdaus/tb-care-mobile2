@@ -1601,6 +1601,16 @@ class _PatientPageState extends State<PatientPage> {
                                 status,
                                 valueColor: _getStatusColor(status),
                               ),
+                              _buildDivider(),
+                              _buildModernDetailRow(
+                                'Tanggal Mulai Pengobatan',
+                                patient['treatment_start_date'] != null
+                                    ? _formatDate(patient['treatment_start_date'])
+                                    : 'Tanggal mulai pengobatan belum dicatat.',
+                                valueColor: patient['treatment_start_date'] != null
+                                    ? null
+                                    : const Color(0xFF64748B),
+                              ),
                               if (treatment != null) ...[
                                 _buildDivider(),
                                 _buildModernDetailRow(

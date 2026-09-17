@@ -237,10 +237,12 @@ class _HomePageState extends State<HomePage> {
       } else if (response.statusCode == 404) {
         throw Exception('Data pasien tidak ditemukan.');
       } else if (response.statusCode >= 500) {
+        log('[HOME] GET /patients/${widget.patientId}/show error (${response.statusCode}): ${response.body}');
         throw Exception(
           'Terjadi kesalahan pada server. Silakan coba lagi nanti.',
         );
       } else {
+        log('[HOME] GET /patients/${widget.patientId}/show unexpected status (${response.statusCode}): ${response.body}');
         throw Exception(
           'Gagal memuat data dari server (${response.statusCode})',
         );
@@ -266,23 +268,31 @@ class _HomePageState extends State<HomePage> {
 
     try {
       final treatments = patientData['treatments'] as List<dynamic>? ?? [];
-      if (treatments.isEmpty) return;
+      final currentTreatment = treatments.isNotEmpty ? treatments[0] : null;
 
-      final currentTreatment = treatments[0];
-      if (currentTreatment == null) return;
+      String? medicationTime;
+      final schedule = patientData['medication_schedule'];
+      if (schedule != null &&
+          schedule['reminder_time'] != null &&
+          schedule['reminder_time'].toString().trim().isNotEmpty) {
+        medicationTime = schedule['reminder_time'].toString().trim();
+      } else if (currentTreatment != null &&
+          currentTreatment['medication_time'] != null &&
+          currentTreatment['medication_time'].toString().trim().isNotEmpty) {
+        medicationTime = currentTreatment['medication_time'].toString().trim();
+      }
 
-      final medicationTime = currentTreatment['medication_time'];
       if (medicationTime == null) return;
 
       if (await _isPatientUser()) {
         await AlarmService.initialize();
         await AlarmService.handleTreatment(
-          status: currentTreatment['treatment_status'] ?? '',
+          status: currentTreatment?['treatment_status'] ?? 'Berjalan',
           medicationTime: medicationTime,
-          visits: currentTreatment['visits'],
+          visits: currentTreatment?['visits'],
         );
         _alarmSetupCompleted = true;
-        log('Alarm setup completed successfully.');
+        log('Alarm setup completed successfully with medicationTime: $medicationTime');
       }
     } catch (e) {
       log('Error inisialisasi alarm: $e');
@@ -433,6 +443,11 @@ class _HomePageState extends State<HomePage> {
         final currentTreatment = treatments.isNotEmpty ? treatments[0] : null;
         final visits = currentTreatment?['visits'] as List<dynamic>? ?? [];
 
+        final rawTreatmentStartDate = patientData['treatment_start_date'];
+        final hasStartDate = rawTreatmentStartDate != null &&
+            rawTreatmentStartDate.toString().trim().isNotEmpty;
+        final hasTreatment = currentTreatment != null || hasStartDate;
+
         return RefreshIndicator(
           onRefresh: _refreshHome,
           color: AppColors.primary,
@@ -444,8 +459,8 @@ class _HomePageState extends State<HomePage> {
               children: [
                 _buildGreetingSection(),
                 const SizedBox(height: 24),
-                if (currentTreatment != null)
-                  _buildTreatmentCard(currentTreatment)
+                if (hasTreatment)
+                  _buildTreatmentCard(currentTreatment, patientData)
                 else
                   _buildEmptyTreatmentCard(),
                 const SizedBox(height: 28),
@@ -528,15 +543,16 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildTreatmentCard(Map<String, dynamic> treatment) {
-    final currentDay = _calculateCurrentDay(
-      treatment['start_date'],
-      treatment['end_date'],
-    );
-    final totalDays = _calculateTotalDays(
-      treatment['start_date'],
-      treatment['end_date'],
-    );
+  Widget _buildTreatmentCard(
+    Map<String, dynamic>? treatment,
+    Map<String, dynamic> patientData,
+  ) {
+    final rawStartDate = patientData['treatment_start_date']?.toString() ??
+        treatment?['start_date']?.toString();
+    final rawEndDate = treatment?['end_date']?.toString();
+
+    final currentDay = _calculateCurrentDay(rawStartDate, rawEndDate);
+    final totalDays = _calculateTotalDays(rawStartDate, rawEndDate);
 
     double progress = 0.0;
     if (totalDays > 0) {
@@ -544,22 +560,43 @@ class _HomePageState extends State<HomePage> {
     }
     final percent = (progress * 100).toInt();
 
-    final medicationTime = _formatTime(treatment['medication_time']);
-    final treatmentStatus = treatment['treatment_status'] ?? 'Berjalan';
-    final treatmentTypeId = treatment['treatment_type_id'];
+    String? rawMedTime;
+    final schedule = patientData['medication_schedule'];
+    if (schedule != null &&
+        schedule['reminder_time'] != null &&
+        schedule['reminder_time'].toString().trim().isNotEmpty) {
+      rawMedTime = schedule['reminder_time'].toString().trim();
+    } else if (treatment != null &&
+        treatment['medication_time'] != null &&
+        treatment['medication_time'].toString().trim().isNotEmpty) {
+      rawMedTime = treatment['medication_time'].toString().trim();
+    }
+    final medicationTime = rawMedTime != null ? _formatTime(rawMedTime) : null;
+
+    final treatmentStatus = treatment?['treatment_status'] ?? 'Berjalan';
+    final treatmentTypeId = treatment?['treatment_type_id'];
 
     String formattedDates = '';
-    try {
-      if (treatment['start_date'] != null && treatment['end_date'] != null) {
-        final start = DateTime.parse(treatment['start_date']);
-        final end = DateTime.parse(treatment['end_date']);
+    if (rawStartDate != null && rawStartDate.trim().isNotEmpty) {
+      try {
+        final start = DateTime.parse(rawStartDate);
         final startStr = DateFormat('d MMMM yyyy', 'id_ID').format(start);
-        final endStr = DateFormat('d MMMM yyyy', 'id_ID').format(end);
-        formattedDates = '$startStr s.d. $endStr';
+        if (rawEndDate != null && rawEndDate.trim().isNotEmpty) {
+          final end = DateTime.tryParse(rawEndDate);
+          if (end != null) {
+            final endStr = DateFormat('d MMMM yyyy', 'id_ID').format(end);
+            formattedDates = '$startStr s.d. $endStr';
+          } else {
+            formattedDates = 'Tanggal Mulai Pengobatan: $startStr';
+          }
+        } else {
+          formattedDates = 'Tanggal Mulai Pengobatan: $startStr';
+        }
+      } catch (e) {
+        formattedDates = 'Tanggal Mulai Pengobatan: $rawStartDate';
       }
-    } catch (e) {
-      formattedDates =
-          '${treatment['start_date'] ?? '--'} s.d. ${treatment['end_date'] ?? '--'}';
+    } else {
+      formattedDates = 'Tanggal mulai pengobatan belum dicatat.';
     }
 
     final isStatusBerjalan = treatmentStatus == 'Berjalan';
@@ -652,7 +689,9 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 20),
 
           Text(
-            _getTreatmentType(treatmentTypeId).toUpperCase(),
+            treatment != null
+                ? _getTreatmentType(treatmentTypeId).toUpperCase()
+                : 'PROGRAM PENGOBATAN TB',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -668,7 +707,9 @@ class _HomePageState extends State<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             children: [
               Text(
-                'Hari ke-$currentDay dari $totalDays',
+                treatment != null && rawEndDate != null && rawEndDate.isNotEmpty
+                    ? 'Hari ke-$currentDay dari $totalDays'
+                    : 'Hari ke-$currentDay',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
@@ -676,7 +717,9 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               Text(
-                '$percent% selesai',
+                treatment != null && rawEndDate != null && rawEndDate.isNotEmpty
+                    ? '$percent% selesai'
+                    : 'Aktif',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
@@ -752,7 +795,9 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     Text(
-                      'Setiap hari, $medicationTime WIB',
+                      medicationTime != null && medicationTime != '--:--'
+                          ? 'Setiap hari, $medicationTime WIB'
+                          : 'Jadwal minum obat belum diatur',
                       style: GoogleFonts.plusJakartaSans(
                         color: Colors.white,
                         fontSize: 13,
@@ -766,41 +811,75 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 20),
 
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton(
-              onPressed: _isUploading ? null : _showUploadDialog,
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: Colors.white,
-                foregroundColor: AppColors.primary,
-                disabledBackgroundColor: Colors.white.withValues(alpha: 0.7),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+          if (treatment != null && _currentTreatmentId != null) ...[
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: _isUploading ? null : _showUploadDialog,
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.primary,
+                  disabledBackgroundColor: Colors.white.withValues(alpha: 0.7),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: _buildUploadButtonContent(),
+              ),
+            ),
+            if (_uploadedToday) ...[
+              const SizedBox(height: 12),
+              Center(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.verified_rounded,
+                      color: Color(0xFF10B981),
+                      size: 14,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      "Bukti hari ini sudah dikirim",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              child: _buildUploadButtonContent(),
-            ),
-          ),
-          if (_uploadedToday) ...[
-            const SizedBox(height: 12),
-            Center(
+            ],
+          ] else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.white24),
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(
-                    Icons.verified_rounded,
-                    color: Color(0xFF10B981),
-                    size: 14,
+                    Icons.info_outline_rounded,
+                    color: Colors.white,
+                    size: 18,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    "Bukti hari ini sudah dikirim",
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      "Menunggu Penetapan Obat & Resep Petugas",
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ],
@@ -923,7 +1002,7 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 8),
           Text(
-            "Anda belum memiliki program pengobatan TB yang aktif di sistem kami.",
+            "Tanggal mulai pengobatan belum dicatat. Anda belum memiliki program pengobatan TB yang aktif di sistem kami.",
             textAlign: TextAlign.center,
             style: GoogleFonts.plusJakartaSans(
               color: Colors.grey.shade600,
@@ -1129,20 +1208,25 @@ class _HomePageState extends State<HomePage> {
 
   // Helper methods
   int _calculateCurrentDay(String? startDate, String? endDate) {
-    if (startDate == null || endDate == null) return 0;
+    if (startDate == null || startDate.trim().isEmpty) return 0;
 
     try {
       final start = DateTime.parse(startDate);
-      final end = DateTime.parse(endDate);
       final now = DateTime.now();
 
       final startOnly = DateTime(start.year, start.month, start.day);
-      final endOnly = DateTime(end.year, end.month, end.day);
       final todayOnly = DateTime(now.year, now.month, now.day);
 
       if (todayOnly.isBefore(startOnly)) return 0;
-      if (todayOnly.isAfter(endOnly)) {
-        return endOnly.difference(startOnly).inDays + 1;
+
+      if (endDate != null && endDate.trim().isNotEmpty) {
+        final end = DateTime.tryParse(endDate);
+        if (end != null) {
+          final endOnly = DateTime(end.year, end.month, end.day);
+          if (todayOnly.isAfter(endOnly)) {
+            return endOnly.difference(startOnly).inDays + 1;
+          }
+        }
       }
 
       return todayOnly.difference(startOnly).inDays + 1;
@@ -1152,7 +1236,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   int _calculateTotalDays(String? startDate, String? endDate) {
-    if (startDate == null || endDate == null) return 1;
+    if (startDate == null || endDate == null || endDate.trim().isEmpty) {
+      return 180; // Standar 6 bulan pengobatan TB
+    }
 
     try {
       final start = DateTime.parse(startDate);
@@ -1161,9 +1247,10 @@ class _HomePageState extends State<HomePage> {
       final startOnly = DateTime(start.year, start.month, start.day);
       final endOnly = DateTime(end.year, end.month, end.day);
 
-      return endOnly.difference(startOnly).inDays + 1;
+      final diff = endOnly.difference(startOnly).inDays + 1;
+      return diff > 0 ? diff : 180;
     } catch (e) {
-      return 1;
+      return 180;
     }
   }
 

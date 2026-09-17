@@ -44,6 +44,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
       FlutterLocalNotificationsPlugin();
   bool _uploadedToday = false;
   bool _isUploading = false;
+  bool _isSavingSchedule = false;
 
   static const String _lastMedicationTimeKey = 'last_medication_time';
 
@@ -277,28 +278,37 @@ class _TreatmentPageState extends State<TreatmentPage> {
           });
         }
 
-        if (_currentTreatment == null) {
-          return data['data'];
-        }
-
-        final treatmentStatus = _currentTreatment!['treatment_status'];
-        final medicationTime = _currentTreatment!['medication_time'];
-
         final isPatient = await _isPatientUser();
 
-        if (!isPatient) {
-          debugPrint('Bukan pasien → alarm dilewati');
-          return data['data'];
+        if (isPatient) {
+          final schedule = data['data']['medication_schedule'];
+          String? effectiveMedicationTime;
+          if (schedule != null &&
+              schedule['reminder_time'] != null &&
+              schedule['reminder_time'].toString().trim().isNotEmpty) {
+            effectiveMedicationTime =
+                schedule['reminder_time'].toString().trim();
+          } else if (_currentTreatment != null &&
+              _currentTreatment!['medication_time'] != null &&
+              _currentTreatment!['medication_time']
+                  .toString()
+                  .trim()
+                  .isNotEmpty) {
+            effectiveMedicationTime =
+                _currentTreatment!['medication_time'].toString().trim();
+          }
+
+          // ================== SINKRONISASI ALARM & KUNJUNGAN ==================
+          await AlarmService.handleTreatment(
+            status: _currentTreatment?['treatment_status'] ?? 'Berjalan',
+            medicationTime: effectiveMedicationTime,
+            visits: _currentTreatment?['visits'],
+          );
         }
 
-        // ================== SINKRONISASI ALARM & KUNJUNGAN ==================
-        await AlarmService.handleTreatment(
-          status: treatmentStatus ?? '',
-          medicationTime: medicationTime,
-          visits: _currentTreatment!['visits'],
-        );
-
-        _checkTodayUpload();
+        if (_currentTreatment != null) {
+          _checkTodayUpload();
+        }
         return data['data'];
       } else if (response.statusCode == 401) {
         if (mounted) {
@@ -425,6 +435,8 @@ class _TreatmentPageState extends State<TreatmentPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildMainJourneyCard(_currentTreatment!),
+                  const SizedBox(height: 20),
+                  _buildMedicationScheduleCard(),
                   const SizedBox(height: 24),
                   _buildDrugList(_currentTreatment!['prescription'] ?? []),
                   const SizedBox(height: 24),
@@ -447,13 +459,22 @@ class _TreatmentPageState extends State<TreatmentPage> {
     String endDateFormatted = '--';
 
     try {
-      if (treatmentData['start_date'] != null &&
-          treatmentData['end_date'] != null) {
-        final start = DateTime.parse(treatmentData['start_date']);
-        final end = DateTime.parse(treatmentData['end_date']);
-        duration = _calculateDuration(start, end);
+      final rawStartDate =
+          _patientData['treatment_start_date']?.toString() ??
+          treatmentData['start_date']?.toString();
+      final rawEndDate = treatmentData['end_date']?.toString();
+
+      if (rawStartDate != null && rawStartDate.trim().isNotEmpty) {
+        final start = DateTime.parse(rawStartDate);
         startDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(start);
-        endDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(end);
+
+        if (rawEndDate != null && rawEndDate.trim().isNotEmpty) {
+          final end = DateTime.parse(rawEndDate);
+          duration = _calculateDuration(start, end);
+          endDateFormatted = DateFormat('dd MMMM yyyy', 'id_ID').format(end);
+        } else {
+          duration = '6 Bulan';
+        }
       }
     } catch (e) {
       log('Error parsing dates for status card: $e');
@@ -461,16 +482,25 @@ class _TreatmentPageState extends State<TreatmentPage> {
 
     String formattedMedicationTime = '--:-- WIB';
     try {
-      final rawMedTime = treatmentData['medication_time'];
-      if (rawMedTime != null && rawMedTime.toString().trim().isNotEmpty) {
-        final medStr = rawMedTime.toString().trim();
-        final parts = medStr.split(':');
+      final schedule = _patientData['medication_schedule'];
+      String? rawMedTime;
+      if (schedule != null &&
+          schedule['reminder_time'] != null &&
+          schedule['reminder_time'].toString().trim().isNotEmpty) {
+        rawMedTime = schedule['reminder_time'].toString().trim();
+      } else if (treatmentData['medication_time'] != null &&
+          treatmentData['medication_time'].toString().trim().isNotEmpty) {
+        rawMedTime = treatmentData['medication_time'].toString().trim();
+      }
+
+      if (rawMedTime != null) {
+        final parts = rawMedTime.split(':');
         if (parts.length >= 2) {
           final hh = parts[0].padLeft(2, '0');
           final mm = parts[1].padLeft(2, '0');
           formattedMedicationTime = '$hh:$mm WIB';
         } else {
-          formattedMedicationTime = '$medStr WIB';
+          formattedMedicationTime = '$rawMedTime WIB';
         }
       }
     } catch (e) {
@@ -1181,79 +1211,512 @@ class _TreatmentPageState extends State<TreatmentPage> {
   }
 
   Widget _buildEmptyTreatmentCard() {
+    final rawStartDate = _patientData['treatment_start_date'];
+    final hasStartDate =
+        rawStartDate != null && rawStartDate.toString().trim().isNotEmpty;
+    String formattedStartDate = '';
+    if (hasStartDate) {
+      try {
+        final dt = DateTime.parse(rawStartDate.toString());
+        formattedStartDate = DateFormat('dd MMMM yyyy', 'id_ID').format(dt);
+      } catch (_) {
+        formattedStartDate = rawStartDate.toString();
+      }
+    }
+
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(24),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 60),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.grey.shade200, width: 1.2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.medical_services_outlined,
+                    color: AppColors.primary,
+                    size: 32,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  hasStartDate
+                      ? "Program Pengobatan Tercatat"
+                      : "Belum Ada Pengobatan",
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.grey.shade800,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  hasStartDate
+                      ? "Tanggal Mulai Pengobatan: $formattedStartDate\nResep dan regimen obat lengkap sedang dipersiapkan oleh petugas faskes."
+                      : "Tanggal mulai pengobatan belum dicatat. Silakan hubungi petugas TB di fasilitas kesehatan Anda untuk memulai program.",
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Card Jadwal & Pengingat Minum Obat
+          _buildMedicationScheduleCard(),
+
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F8FF),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    hasStartDate
+                        ? "Anda dapat menentukan sendiri jam minum obat di atas agar pengingat harian aktif di ponsel Anda."
+                        : "Silakan hubungi petugas TB di fasilitas kesehatan Anda untuk memulai program.",
+                    style: GoogleFonts.plusJakartaSans(
+                      color: AppColors.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMedicationScheduleCard() {
+    final schedule = _patientData['medication_schedule'];
+    final rawTime =
+        schedule?['reminder_time']?.toString() ??
+        _currentTreatment?['medication_time']?.toString();
+    final bool hasSchedule =
+        rawTime != null && rawTime.trim().isNotEmpty && rawTime != '--:--';
+
+    String displayTime = '';
+    if (hasSchedule) {
+      final parts = rawTime.trim().split(':');
+      if (parts.length >= 2) {
+        final hh = parts[0].padLeft(2, '0');
+        final mm = parts[1].padLeft(2, '0');
+        displayTime = '$hh:$mm';
+      } else {
+        displayTime = rawTime;
+      }
+    }
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade200, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.alarm_rounded,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Jadwal Minum Obat',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey.shade800,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (hasSchedule) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: const Color(0xFFA7F3D0),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        size: 12,
+                        color: Color(0xFF059669),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Pengingat Aktif',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: const Color(0xFF059669),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (hasSchedule) ...[
             Container(
-              width: 80,
-              height: 80,
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.medical_services_outlined,
-                color: AppColors.primary,
-                size: 38,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              "Belum Ada Pengobatan",
-              style: GoogleFonts.plusJakartaSans(
-                color: Colors.grey.shade800,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "Belum terdapat informasi pengobatan TB pada akun Anda.",
-              textAlign: TextAlign.center,
-              style: GoogleFonts.plusJakartaSans(
-                color: Colors.grey.shade600,
-                fontSize: 13,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 24),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF3F8FF),
-                borderRadius: BorderRadius.circular(16),
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
               child: Row(
                 children: [
                   const Icon(
-                    Icons.info_outline_rounded,
+                    Icons.access_time_filled_rounded,
                     color: AppColors.primary,
-                    size: 22,
+                    size: 28,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      "Silakan hubungi petugas TB di fasilitas kesehatan Anda untuk memulai program.",
-                      style: GoogleFonts.plusJakartaSans(
-                        color: AppColors.primary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        height: 1.4,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Waktu Pengingat Harian',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            color: Colors.grey.shade500,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Setiap hari pukul $displayTime WIB',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: OutlinedButton(
+                onPressed:
+                    _isSavingSchedule ? null : _pickAndSaveMedicationTime,
+                // ignore: sort_child_properties_last
+                child: Text(
+                  _isSavingSchedule ? 'Menyimpan...' : 'Ubah Waktu Minum Obat',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ] else ...[
+            Text(
+              'Anda belum mengatur waktu pengingat minum obat. Tentukan jam minum obat harian agar aplikasi dapat mengingatkan Anda tepat waktu.',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                color: Colors.grey.shade600,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: ElevatedButton.icon(
+                onPressed:
+                    _isSavingSchedule ? null : _pickAndSaveMedicationTime,
+                icon:
+                    _isSavingSchedule
+                        ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                        : const Icon(Icons.alarm_add_rounded, size: 18),
+                label: Text(
+                  _isSavingSchedule ? 'Menyimpan...' : 'Atur Waktu Minum Obat',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
+  }
+
+  Future<void> _pickAndSaveMedicationTime() async {
+    if (_isSavingSchedule) return;
+
+    TimeOfDay initial = const TimeOfDay(hour: 8, minute: 0);
+    final schedule = _patientData['medication_schedule'];
+    final existingTimeStr =
+        schedule?['reminder_time']?.toString() ??
+        _currentTreatment?['medication_time']?.toString();
+    if (existingTimeStr != null && existingTimeStr.isNotEmpty) {
+      final parts = existingTimeStr.split(':');
+      if (parts.length >= 2) {
+        final h = int.tryParse(parts[0]);
+        final m = int.tryParse(parts[1]);
+        if (h != null && m != null) {
+          initial = TimeOfDay(hour: h, minute: m);
+        }
+      }
+    }
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initial,
+      helpText: 'PILIH WAKTU MINUM OBAT',
+      cancelText: 'BATAL',
+      confirmText: 'SIMPAN',
+      builder: (BuildContext context, Widget? child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              colorScheme: const ColorScheme.light(
+                primary: AppColors.primary,
+                onPrimary: Colors.white,
+                onSurface: Colors.black87,
+              ),
+              textButtonTheme: TextButtonThemeData(
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  textStyle: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            child: child!,
+          ),
+        );
+      },
+    );
+
+    if (picked != null) {
+      await _saveMedicationSchedule(picked);
+    }
+  }
+
+  Future<void> _saveMedicationSchedule(TimeOfDay pickedTime) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token') ?? '';
+    if (token.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sesi telah berakhir. Silakan login kembali.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final hourStr = pickedTime.hour.toString().padLeft(2, '0');
+    final minStr = pickedTime.minute.toString().padLeft(2, '0');
+    final timeFormatted = '$hourStr:$minStr';
+
+    setState(() {
+      _isSavingSchedule = true;
+    });
+
+    try {
+      final uri = Uri.parse(
+        '${Connection.BASE_URL}/patients/${widget.patientId}/medication-schedule',
+      );
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'reminder_time': timeFormatted}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final resData = jsonDecode(response.body);
+        final scheduleData = resData['data'];
+
+        if (mounted) {
+          setState(() {
+            _patientData['medication_schedule'] = scheduleData;
+            if (_currentTreatment != null) {
+              _currentTreatment!['medication_time'] = '$timeFormatted:00';
+            }
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Jadwal minum obat berhasil disimpan pukul $timeFormatted WIB',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
+              ),
+              backgroundColor: const Color(0xFF10B981),
+            ),
+          );
+        }
+
+        // Reschedule alarm
+        if (await _isPatientUser()) {
+          await AlarmService.setMedicationReminder(timeFormatted, force: true);
+        }
+      } else {
+        String friendlyError =
+            'Jadwal minum obat belum dapat disimpan. Silakan coba lagi.';
+        try {
+          final resData = jsonDecode(response.body);
+          log(
+            '[SCHEDULE] Server error response (${response.statusCode}): ${response.body}',
+          );
+          if (response.statusCode == 422) {
+            friendlyError =
+                resData['message'] ??
+                'Format waktu pengingat minum obat tidak valid.';
+          } else if (response.statusCode == 403) {
+            friendlyError =
+                'Anda tidak memiliki wewenang untuk mengubah jadwal ini.';
+          }
+        } catch (_) {
+          log('[SCHEDULE] Could not parse server error body: ${response.body}');
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(friendlyError),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      log('[SCHEDULE] Exception caught while saving schedule: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Jadwal minum obat belum dapat disimpan. Silakan coba lagi.',
+            ),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingSchedule = false;
+        });
+      }
+    }
   }
 
   Widget _buildErrorState(String message) {

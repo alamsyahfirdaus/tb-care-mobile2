@@ -6,6 +6,7 @@ import 'package:apk_tb_care/main/login.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 // Constants for Modern Health Theme Styling (Blue Palette)
 const Color kPrimaryColor = Color(0xFF1E88E5); // Vibrant Primary Blue
@@ -525,11 +526,23 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
   final nik = TextEditingController();
   final hp = TextEditingController();
   final puskesmasController = TextEditingController();
+  final treatmentStartDateController = TextEditingController();
 
   String? gender;
   String? puskesmas;
+  DateTime? treatmentStartDate = DateTime.now();
 
   bool isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (treatmentStartDate != null) {
+      treatmentStartDateController.text = DateFormat(
+        'yyyy-MM-dd',
+      ).format(treatmentStartDate!);
+    }
+  }
 
   @override
   void dispose() {
@@ -537,7 +550,31 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
     nik.dispose();
     hp.dispose();
     puskesmasController.dispose();
+    treatmentStartDateController.dispose();
     super.dispose();
+  }
+
+  Future<void> _selectTreatmentStartDate(BuildContext context) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initialDate =
+        (treatmentStartDate != null && !treatmentStartDate!.isAfter(today))
+            ? treatmentStartDate!
+            : today;
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000),
+      lastDate: today,
+    );
+    if (picked != null) {
+      setState(() {
+        treatmentStartDate = picked;
+        treatmentStartDateController.text = DateFormat(
+          'yyyy-MM-dd',
+        ).format(picked);
+      });
+    }
   }
 
   Future<void> registerPatient() async {
@@ -555,6 +592,11 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
         "gender": gender,
         "puskesmas_id": puskesmas,
       };
+      if (treatmentStartDate != null) {
+        payload["treatment_start_date"] = DateFormat(
+          'yyyy-MM-dd',
+        ).format(treatmentStartDate!);
+      }
       if (nik.text.trim().isNotEmpty) {
         payload["nik"] = nik.text.trim();
       }
@@ -757,6 +799,27 @@ class _PatientRegisterTabState extends State<PatientRegisterTab> {
                     setState(() {
                       puskesmas = value;
                     });
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: treatmentStartDateController,
+                  readOnly: true,
+                  onTap: () => _selectTreatmentStartDate(context),
+                  decoration: buildInputDecoration(
+                    labelText: "Tanggal Mulai Pengobatan (Opsional)",
+                    hintText: "Pilih tanggal mulai pengobatan",
+                    prefixIcon: Icons.calendar_month_outlined,
+                  ),
+                  validator: (value) {
+                    if (treatmentStartDate != null) {
+                      final now = DateTime.now();
+                      final today = DateTime(now.year, now.month, now.day);
+                      if (treatmentStartDate!.isAfter(today)) {
+                        return "Tanggal mulai pengobatan tidak boleh di masa depan";
+                      }
+                    }
+                    return null;
                   },
                 ),
                 const SizedBox(height: 32),

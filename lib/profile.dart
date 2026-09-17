@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:apk_tb_care/main/login.dart';
 import 'package:apk_tb_care/connection.dart';
 import 'package:apk_tb_care/edit_profile.dart';
+import 'package:apk_tb_care/alarm_service.dart';
 import 'package:apk_tb_care/values/colors.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -138,6 +139,12 @@ class _ProfilePageState extends State<ProfilePage> {
    * FORCE LOGOUT (SESSION CLEANER)
    * ========================================================= */
   Future<void> _forceLogout() async {
+    try {
+      await AlarmService.stopAllMedicationAlarm();
+    } catch (e) {
+      debugPrint('Error stopping medication alarms on logout: $e');
+    }
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
 

@@ -58,6 +58,24 @@ class AlarmService {
     }
   }
 
+  static Future<void> setMedicationReminder(
+    String time, {
+    bool force = false,
+  }) async {
+    log('[ALARM] setMedicationReminder: $time (force: $force)');
+    if (!await _isPatientUser()) {
+      log('setMedicationReminder diblok (bukan pasien)');
+      return;
+    }
+
+    if (force) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_lastMedicationTimeKey);
+    }
+
+    await _rescheduleMedicationIfNeeded(time);
+  }
+
   static Future<bool> _isPatientUser() async {
     final prefs = await SharedPreferences.getInstance();
     final userType = prefs.getInt('user_type_id');

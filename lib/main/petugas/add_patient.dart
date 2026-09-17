@@ -26,10 +26,13 @@ class _AddPatientPageState extends State<AddPatientPage> {
   final TextEditingController _placeOfBirthController = TextEditingController();
   final TextEditingController _dateOfBirthDisplayController =
       TextEditingController();
+  final TextEditingController _treatmentStartDateDisplayController =
+      TextEditingController();
 
   // Form State Values
   String _gender = 'L';
   DateTime? _dateOfBirth;
+  DateTime _treatmentStartDate = DateTime.now();
   int? _selectedPuskesmasId;
   String? _selectedPuskesmasName;
 
@@ -42,6 +45,10 @@ class _AddPatientPageState extends State<AddPatientPage> {
   @override
   void initState() {
     super.initState();
+    _treatmentStartDateDisplayController.text = DateFormat(
+      'dd/MM/yyyy',
+      'id_ID',
+    ).format(_treatmentStartDate);
     _fetchPuskesmasData();
   }
 
@@ -53,6 +60,7 @@ class _AddPatientPageState extends State<AddPatientPage> {
     _phoneController.dispose();
     _placeOfBirthController.dispose();
     _dateOfBirthDisplayController.dispose();
+    _treatmentStartDateDisplayController.dispose();
     super.dispose();
   }
 
@@ -169,6 +177,45 @@ class _AddPatientPageState extends State<AddPatientPage> {
   }
 
   // ===========================================================================
+  // DATE PICKER (TANGGAL MULAI PENGOBATAN)
+  // ===========================================================================
+
+  Future<void> _selectTreatmentStartDate(BuildContext context) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initialDate =
+        _treatmentStartDate.isAfter(today) ? today : _treatmentStartDate;
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000),
+      lastDate: today,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppColors.primary,
+              onPrimary: Colors.white,
+              onSurface: AppColors.text,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _treatmentStartDate = picked;
+        _treatmentStartDateDisplayController.text = DateFormat(
+          'dd/MM/yyyy',
+          'id_ID',
+        ).format(picked);
+      });
+    }
+  }
+
+  // ===========================================================================
   // FORM SUBMISSION & API INTEGRATION
   // ===========================================================================
 
@@ -219,6 +266,7 @@ class _AddPatientPageState extends State<AddPatientPage> {
         'place_of_birth': _placeOfBirthController.text.trim(),
         'date_of_birth': _dateOfBirth?.toIso8601String(),
         'puskesmas_id': _selectedPuskesmasId,
+        'treatment_start_date': DateFormat('yyyy-MM-dd').format(_treatmentStartDate),
         'nik':
             _nikController.text.trim().isEmpty
                 ? null
@@ -646,6 +694,40 @@ class _AddPatientPageState extends State<AddPatientPage> {
 
                         // 8. Puskesmas * (Searchable Autocomplete)
                         _buildPuskesmasAutocomplete(),
+                        const SizedBox(height: 14),
+
+                        // 9. Tanggal Mulai Pengobatan *
+                        _buildFieldLabel('Tanggal Mulai Pengobatan', isRequired: true),
+                        const SizedBox(height: 6),
+                        TextFormField(
+                          controller: _treatmentStartDateDisplayController,
+                          readOnly: true,
+                          onTap: () => _selectTreatmentStartDate(context),
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13.5,
+                            color: AppColors.text,
+                          ),
+                          decoration: _buildInputDecoration(
+                            hintText: 'Pilih tanggal mulai pengobatan',
+                            prefixIcon: Icons.medical_services_outlined,
+                            suffixIcon: const Icon(
+                              Icons.calendar_month_outlined,
+                              size: 18,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          validator: (value) {
+                            if (_treatmentStartDateDisplayController.text.trim().isEmpty) {
+                              return 'Tanggal mulai pengobatan wajib diisi';
+                            }
+                            final now = DateTime.now();
+                            final today = DateTime(now.year, now.month, now.day);
+                            if (_treatmentStartDate.isAfter(today)) {
+                              return 'Tanggal mulai pengobatan tidak boleh di masa depan';
+                            }
+                            return null;
+                          },
+                        ),
                         const SizedBox(height: 28),
 
                         // Submit Button

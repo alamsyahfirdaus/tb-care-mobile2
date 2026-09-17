@@ -22,6 +22,8 @@ class _EditPatientPageState extends State<EditPatientPage> {
   final TextEditingController _dateOfBirthController = TextEditingController();
   final TextEditingController _diagnosisDateController =
       TextEditingController();
+  final TextEditingController _treatmentStartDateController =
+      TextEditingController();
 
   // Form fields
   late String _nik;
@@ -39,6 +41,7 @@ class _EditPatientPageState extends State<EditPatientPage> {
   int? _weight;
   String? _bloodType;
   DateTime? _diagnosisDate;
+  DateTime? _treatmentStartDate;
 
   // Dropdown options
   List<Map<String, dynamic>> _puskesmasOptions = [];
@@ -87,6 +90,10 @@ class _EditPatientPageState extends State<EditPatientPage> {
               patient['diagnosis_date'] != null
                   ? DateTime.parse(patient['diagnosis_date'])
                   : null;
+          _treatmentStartDate =
+              patient['treatment_start_date'] != null
+                  ? DateTime.parse(patient['treatment_start_date'])
+                  : null;
 
           _dateOfBirthController.text = DateFormat(
             'yyyy-MM-dd',
@@ -95,6 +102,11 @@ class _EditPatientPageState extends State<EditPatientPage> {
             _diagnosisDateController.text = DateFormat(
               'yyyy-MM-dd',
             ).format(_diagnosisDate!);
+          }
+          if (_treatmentStartDate != null) {
+            _treatmentStartDateController.text = DateFormat(
+              'yyyy-MM-dd',
+            ).format(_treatmentStartDate!);
           }
         });
       } else {
@@ -180,6 +192,28 @@ class _EditPatientPageState extends State<EditPatientPage> {
     }
   }
 
+  Future<void> _selectTreatmentStartDate(BuildContext context) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final initialDate = (_treatmentStartDate != null && !_treatmentStartDate!.isAfter(today))
+        ? _treatmentStartDate!
+        : today;
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2000),
+      lastDate: today,
+    );
+    if (picked != null) {
+      setState(() {
+        _treatmentStartDate = picked;
+        _treatmentStartDateController.text = DateFormat(
+          'yyyy-MM-dd',
+        ).format(picked);
+      });
+    }
+  }
+
   Future<void> _submitForm() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -214,6 +248,9 @@ class _EditPatientPageState extends State<EditPatientPage> {
           'weight': _weight,
           'blood_type': _bloodType,
           'diagnosis_date': _diagnosisDate?.toIso8601String(),
+          'treatment_start_date': _treatmentStartDate != null
+              ? DateFormat('yyyy-MM-dd').format(_treatmentStartDate!)
+              : null,
         }),
       );
 
@@ -567,6 +604,28 @@ class _EditPatientPageState extends State<EditPatientPage> {
                         readOnly: true,
                         onTap: () => _selectDate(context, false),
                       ),
+                      const SizedBox(height: 16),
+
+                      // Treatment Start Date
+                      TextFormField(
+                        controller: _treatmentStartDateController,
+                        decoration: const InputDecoration(
+                          labelText: 'Tanggal Mulai Pengobatan (opsional)',
+                          suffixIcon: Icon(Icons.calendar_month),
+                        ),
+                        readOnly: true,
+                        onTap: () => _selectTreatmentStartDate(context),
+                        validator: (value) {
+                          if (_treatmentStartDate != null) {
+                            final now = DateTime.now();
+                            final today = DateTime(now.year, now.month, now.day);
+                            if (_treatmentStartDate!.isAfter(today)) {
+                              return 'Tanggal mulai pengobatan tidak boleh di masa depan';
+                            }
+                          }
+                          return null;
+                        },
+                      ),
                       const SizedBox(height: 24),
 
                       // Submit Button
@@ -653,6 +712,7 @@ class _EditPatientPageState extends State<EditPatientPage> {
   void dispose() {
     _dateOfBirthController.dispose();
     _diagnosisDateController.dispose();
+    _treatmentStartDateController.dispose();
     super.dispose();
   }
 }

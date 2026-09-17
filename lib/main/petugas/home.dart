@@ -177,6 +177,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
   /// Jika tidak tersedia pada object pasien, fallback ke start_date pengobatan aktif/terkini.
   DateTime? _getPatientRegistrationDate(Map<String, dynamic> patient) {
     for (final key in [
+      'treatment_start_date',
       'created_at',
       'registered_at',
       'registration_date',
@@ -1696,6 +1697,14 @@ class _StaffHomePageState extends State<StaffHomePage> {
                         'Status Pengobatan',
                         treatment?['treatment_status'] ??
                             'Belum ada pengobatan',
+                      ),
+                      _buildDetailRow(
+                        'Tanggal Mulai Pengobatan',
+                        patient['treatment_start_date'] != null
+                            ? (DateTime.tryParse(patient['treatment_start_date'].toString()) != null
+                                ? DateFormat('dd MMM yyyy', 'id_ID').format(DateTime.parse(patient['treatment_start_date'].toString()))
+                                : patient['treatment_start_date'].toString())
+                            : 'Tanggal mulai pengobatan belum dicatat.',
                       ),
                       if (treatment != null) ...[
                         if (treatment['start_date'] != null &&
