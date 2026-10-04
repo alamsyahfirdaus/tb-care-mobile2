@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 
@@ -11,6 +12,9 @@ import 'package:intl/intl.dart';
 
 class AlarmService {
   static const String _lastMedicationTimeKey = 'last_medication_time';
+  static const String _visitReminderEnabledKey = 'visit_reminder_enabled';
+  static const String _visitReminderOffsetKey = 'visit_reminder_offset_minutes';
+  static const String _nextVisitAlarmInfoKey = 'next_visit_alarm_info';
 
   /// SET TRUE UNTUK TES VISIT 1 MENIT
   // ignore: constant_identifier_names
@@ -34,6 +38,7 @@ class AlarmService {
     required String status,
     required String? medicationTime,
     required List<dynamic>? visits,
+    String puskesmasName = 'Puskesmas',
   }) async {
     log('[ALARM] User type: Pasien');
     log('[ALARM] Treatment status: $status');
@@ -54,7 +59,7 @@ class AlarmService {
     }
 
     if (visits != null && visits.isNotEmpty) {
-      await scheduleVisitNotifications(visits);
+      await scheduleVisitNotifications(visits, puskesmasName: puskesmasName);
     }
   }
 
@@ -186,15 +191,68 @@ class AlarmService {
   }
 
   /// ================= VISIT =================
-  static Future<void> scheduleVisitNotifications(List<dynamic> visits) async {
+  static Future<void> scheduleVisitNotifications(
+    List<dynamic> visits, {
+    String puskesmasName = 'Puskesmas',
+    int? reminderOffsetMinutes,
+    bool? isEnabled,
+  }) async {
     if (!await _isPatientUser()) {
       log('Visit alarm diblok (bukan pasien)');
       return;
     }
 
+    final prefs = await SharedPreferences.getInstance();
+    final enabled =
+        isEnabled ?? (prefs.getBool(_visitReminderEnabledKey) ?? true);
+    final offsetMinutes =
+        reminderOffsetMinutes ?? (prefs.getInt(_visitReminderOffsetKey) ?? 60);
+
+    await prefs.setBool(_visitReminderEnabledKey, enabled);
+    await prefs.setInt(_visitReminderOffsetKey, offsetMinutes);
+
+    // Cancel previously registered visit alarms for these visits
     for (final visit in visits) {
+      if (visit is Map && visit['id'] != null) {
+        final vId =
+            visit['id'] is int
+                ? visit['id'] as int
+                : int.tryParse(visit['id'].toString()) ?? 0;
+        if (vId > 0) {
+          await AndroidAlarmManager.cancel(vId);
+          await Workmanager().cancelByUniqueName('visit_$vId');
+        }
+      }
+    }
+
+    if (!enabled) {
+      log('[ALARM] Pengingat kunjungan dinonaktifkan oleh pengguna');
+      await prefs.remove(_nextVisitAlarmInfoKey);
+      return;
+    }
+
+    // Sort visits by date & time ascending
+    final sortedVisits = List<dynamic>.from(visits);
+    sortedVisits.sort((a, b) {
+      final dateA = a['visit_date']?.toString() ?? '';
+      final dateB = b['visit_date']?.toString() ?? '';
+      final cmp = dateA.compareTo(dateB);
+      if (cmp != 0) return cmp;
+      final timeA = a['visit_time']?.toString() ?? '';
+      final timeB = b['visit_time']?.toString() ?? '';
+      return timeA.compareTo(timeB);
+    });
+
+    Map<String, dynamic>? nextUpcomingVisit;
+
+    for (final visit in sortedVisits) {
       try {
         if (visit['visit_date'] == null || visit['visit_time'] == null) {
+          continue;
+        }
+
+        final status = visit['visit_status']?.toString() ?? 'Terjadwal';
+        if (status != 'Terjadwal') {
           continue;
         }
 
@@ -204,8 +262,8 @@ class AlarmService {
           reminderTime = DateTime.now().add(const Duration(minutes: 1));
           log('DEBUG VISIT → 1 menit');
         } else {
-          final visitDate = DateTime.parse(visit['visit_date']);
-          final timeParts = visit['visit_time'].split(':');
+          final visitDate = DateTime.parse(visit['visit_date'].toString());
+          final timeParts = visit['visit_time'].toString().split(':');
           if (timeParts.length < 2) {
             continue;
           }
@@ -219,7 +277,7 @@ class AlarmService {
                 int.parse(timeParts[1]),
               ).toLocal();
 
-          reminderTime = scheduled.subtract(const Duration(hours: 1));
+          reminderTime = scheduled.subtract(Duration(minutes: offsetMinutes));
         }
 
         final initialDelay = reminderTime.difference(DateTime.now());
@@ -231,9 +289,39 @@ class AlarmService {
           continue;
         }
 
+        final vId =
+            visit['id'] is int
+                ? visit['id'] as int
+                : int.tryParse(visit['id'].toString()) ?? 100;
+        final timeStr = visit['visit_time'].toString();
+        final formattedTime =
+            timeStr.length >= 5 ? timeStr.substring(0, 5) : timeStr;
+        final visitPuskesmas =
+            (visit['puskesmas_name'] != null &&
+                    visit['puskesmas_name'].toString().isNotEmpty)
+                ? visit['puskesmas_name'].toString()
+                : puskesmasName;
+
+        final notifMessage =
+            'Anda memiliki jadwal kunjungan ke $visitPuskesmas pukul $formattedTime WIB hari ini.';
+
+        if (nextUpcomingVisit == null) {
+          nextUpcomingVisit = {
+            'id': vId,
+            'puskesmas': visitPuskesmas,
+            'time': formattedTime,
+            'date': visit['visit_date'].toString(),
+            'message': notifMessage,
+          };
+          await prefs.setString(
+            _nextVisitAlarmInfoKey,
+            jsonEncode(nextUpcomingVisit),
+          );
+        }
+
         await AndroidAlarmManager.oneShotAt(
           reminderTime,
-          visit['id'],
+          vId,
           visitAlarmCallback,
           exact: true,
           wakeup: true,
@@ -241,25 +329,57 @@ class AlarmService {
         );
 
         await Workmanager().registerOneOffTask(
-          'visit_${visit['id']}',
+          'visit_$vId',
           'visit_reminder',
           initialDelay: initialDelay,
           constraints: Constraints(networkType: NetworkType.notRequired),
           inputData: {
-            'visit_id': visit['id'],
-            'title': 'Kunjungan Pengobatan',
-            'message': 'Anda memiliki jadwal kunjungan dalam 1 jam',
+            'visit_id': vId,
+            'title': '🏥 Jadwal Kunjungan Puskesmas',
+            'message': notifMessage,
           },
           tag: 'visit_reminder',
         );
 
         log(
-          'Alarm kunjungan diset (AlarmManager + WorkManager backup): $reminderTime',
+          'Alarm kunjungan diset (AlarmManager + WorkManager backup): $reminderTime (ID: $vId)',
         );
       } catch (e) {
         log('Error visit alarm: $e');
       }
     }
+  }
+
+  static Future<bool> isVisitReminderEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_visitReminderEnabledKey) ?? true;
+  }
+
+  static Future<int> getVisitReminderOffsetMinutes() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getInt(_visitReminderOffsetKey) ?? 60;
+  }
+
+  static Future<void> updateVisitReminderSettings({
+    required bool isEnabled,
+    required int offsetMinutes,
+    required List<dynamic> visits,
+    String puskesmasName = 'Puskesmas',
+  }) async {
+    await scheduleVisitNotifications(
+      visits,
+      puskesmasName: puskesmasName,
+      reminderOffsetMinutes: offsetMinutes,
+      isEnabled: isEnabled,
+    );
+  }
+
+  static Future<void> cancelSpecificVisitAlarm(int visitId) async {
+    await AndroidAlarmManager.cancel(visitId);
+    await Workmanager().cancelByUniqueName('visit_$visitId');
+    final plugin = FlutterLocalNotificationsPlugin();
+    await plugin.cancel(visitId);
+    log('[ALARM] Cancelled specific visit alarm ID: $visitId');
   }
 
   /// ================= PERMISSION =================
@@ -392,6 +512,38 @@ void visitAlarmCallback() async {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getInt('user_type_id') != 2) return;
 
+    final isEnabled = prefs.getBool('visit_reminder_enabled') ?? true;
+    if (!isEnabled) {
+      log('[ALARM] Visit reminder is disabled by user preference');
+      return;
+    }
+
+    String title = '🏥 Jadwal Kunjungan Puskesmas';
+    String message = 'Anda memiliki jadwal kunjungan ke Puskesmas hari ini.';
+    int notificationId = 100;
+
+    final nextInfoStr = prefs.getString('next_visit_alarm_info');
+    if (nextInfoStr != null && nextInfoStr.isNotEmpty) {
+      try {
+        final info = jsonDecode(nextInfoStr);
+        if (info is Map) {
+          notificationId =
+              info['id'] is int
+                  ? info['id'] as int
+                  : int.tryParse(info['id'].toString()) ?? 100;
+          if (info['message'] != null &&
+              info['message'].toString().isNotEmpty) {
+            message = info['message'].toString();
+          } else if (info['puskesmas'] != null && info['time'] != null) {
+            message =
+                'Anda memiliki jadwal kunjungan ke ${info['puskesmas']} pukul ${info['time']} WIB hari ini.';
+          }
+        }
+      } catch (e) {
+        log('[ALARM] Error decoding visit info: $e');
+      }
+    }
+
     final notifications = FlutterLocalNotificationsPlugin();
     await notifications.initialize(
       const InitializationSettings(
@@ -400,21 +552,24 @@ void visitAlarmCallback() async {
     );
 
     await notifications.show(
-      999,
-      'Kunjungan Pengobatan',
-      'Anda memiliki jadwal kunjungan pengobatan',
+      notificationId,
+      title,
+      message,
       const NotificationDetails(
         android: AndroidNotificationDetails(
-          'alarm_channel',
-          'Alarm TB Care',
+          'visit_channel',
+          'Pengingat Kunjungan',
           importance: Importance.max,
           priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
           sound: RawResourceAndroidNotificationSound('alarm_tb_care2'),
           category: AndroidNotificationCategory.alarm,
           fullScreenIntent: true,
         ),
       ),
     );
+    log('[ALARM] Visit notification shown with ID $notificationId');
   } catch (e) {
     log('[ALARM] Error showing visit notification: $e');
   }
@@ -518,10 +673,10 @@ void callbackDispatcher() {
     }
 
     if (task == 'visit_reminder') {
-      final visitId = inputData?['visit_id'] ?? 999;
-      final title = inputData?['title'] ?? 'Kunjungan Pengobatan';
+      final visitId = inputData?['visit_id'] ?? 100;
+      final title = inputData?['title'] ?? '🏥 Jadwal Kunjungan Puskesmas';
       final message =
-          inputData?['message'] ?? 'Anda memiliki jadwal kunjungan pengobatan';
+          inputData?['message'] ?? 'Anda memiliki jadwal kunjungan ke Puskesmas hari ini.';
 
       await notifications.show(
         visitId,
