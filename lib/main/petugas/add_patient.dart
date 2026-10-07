@@ -392,25 +392,7 @@ class _AddPatientPageState extends State<AddPatientPage> {
       backgroundColor: const Color(0xFFF8FAFC),
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        centerTitle: false,
-        leading: IconButton(
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: Colors.white,
-            size: 18,
-          ),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          'Tambah Pasien Baru',
-          style: GoogleFonts.plusJakartaSans(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 17,
-          ),
-        ),
+        title: const Text('Tambah Pasien Baru'),
       ),
       body: SafeArea(
         child:

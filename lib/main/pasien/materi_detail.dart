@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:apk_tb_care/connection.dart';
-import 'package:apk_tb_care/values/colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_linkify/flutter_linkify.dart';
 import 'package:share_plus/share_plus.dart';
@@ -86,13 +85,7 @@ class _MateriDetailPageState extends State<MateriDetailPage> {
     if (isError || material.isEmpty) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text(
-            "Detail Materi",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          elevation: 0.5,
-          backgroundColor: AppColors.primary,
-          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text("Detail Materi"),
         ),
         body: Center(
           child: Padding(
@@ -148,17 +141,7 @@ class _MateriDetailPageState extends State<MateriDetailPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(
-          "Detail Edukasi",
-          style: GoogleFonts.plusJakartaSans(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-        backgroundColor: AppColors.primary,
-        elevation: 0.5,
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text("Detail Edukasi"),
         // actions: [
         //   IconButton(
         //     icon: const Icon(Icons.share_outlined, color: Colors.white),
@@ -333,18 +316,24 @@ class _MateriDetailPageState extends State<MateriDetailPage> {
   }
 
   Widget _buildMediaHeader(String? materialType) {
-    if (materialType == 'image' && material['photo'] != null) {
+    final rawPhoto = material['photo']?.toString();
+    final imageUrl = _resolveImageUrl(rawPhoto);
+    if (materialType == 'image' && imageUrl != null && imageUrl.isNotEmpty) {
       return CachedNetworkImage(
-        imageUrl: '${Connection.BASE_URL}/image/${material['photo']}',
-        httpHeaders: {'Authorization': 'Bearer $_token'},
+        imageUrl: imageUrl,
+        httpHeaders:
+            _token.isNotEmpty ? {'Authorization': 'Bearer $_token'} : null,
         fit: BoxFit.cover,
         width: double.infinity,
         placeholder:
             (context, url) =>
                 const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-        errorWidget:
-            (context, url, error) =>
-                const Icon(Icons.broken_image, size: 60, color: Colors.grey),
+        errorWidget: (context, url, error) {
+          debugPrint(
+            '[MateriDetail] Image load error for url: $url, error: $error',
+          );
+          return const Icon(Icons.broken_image, size: 60, color: Colors.grey);
+        },
       );
     }
 
@@ -505,8 +494,9 @@ class _MateriDetailPageState extends State<MateriDetailPage> {
                   minScale: 0.5,
                   maxScale: 4.0,
                   child: CachedNetworkImage(
-                    imageUrl: '${Connection.BASE_URL}/image/$photo',
-                    httpHeaders: {'Authorization': 'Bearer $_token'},
+                    imageUrl: _resolveImageUrl(photo) ?? '',
+                    httpHeaders:
+                        _token.isNotEmpty ? {'Authorization': 'Bearer $_token'} : null,
                     fit: BoxFit.contain,
                     width: double.infinity,
                     height: double.infinity,
@@ -514,17 +504,25 @@ class _MateriDetailPageState extends State<MateriDetailPage> {
                         (context, url) => const Center(
                           child: CircularProgressIndicator(color: Colors.white),
                         ),
-                    errorWidget:
-                        (context, url, error) => const Icon(
-                          Icons.broken_image,
-                          color: Colors.white,
-                          size: 60,
-                        ),
+                    errorWidget: (context, url, error) {
+                      debugPrint(
+                        '[MateriDetailDialog] Image load error for url: $url, error: $error',
+                      );
+                      return const Icon(
+                        Icons.broken_image,
+                        color: Colors.white,
+                        size: 60,
+                      );
+                    },
                   ),
                 ),
               ),
             ),
       ),
     );
+  }
+
+  String? _resolveImageUrl(String? photo) {
+    return Connection.resolveImageUrl(photo);
   }
 }

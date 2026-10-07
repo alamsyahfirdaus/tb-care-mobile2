@@ -5,6 +5,7 @@ import 'package:apk_tb_care/connection.dart';
 import 'package:apk_tb_care/edit_profile.dart';
 import 'package:apk_tb_care/alarm_service.dart';
 import 'package:apk_tb_care/values/colors.dart';
+import 'package:apk_tb_care/services/address_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -319,16 +320,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildSkeletonLoader() {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Profil Saya',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w600,
-            color: AppColors.primary,
-          ),
-        ),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.primary,
-        elevation: 0,
+        title: const Text('Profil Saya'),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -462,16 +454,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          'Profil Saya',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
-        ),
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        centerTitle: true,
+        title: const Text('Profil Saya'),
       ),
       body: Center(
         child: Padding(
@@ -685,9 +668,20 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildInfoItem(IconData icon, String label, String value) {
+  Widget _buildInfoItem(
+    IconData icon,
+    String label,
+    String value, {
+    int? maxLines = 2,
+    String? subtitle,
+  }) {
     final displayValue =
         (value.trim().isEmpty || value == '-') ? 'Belum diisi' : value;
+    final hasSubtitle =
+        subtitle != null &&
+        subtitle.trim().isNotEmpty &&
+        subtitle.trim() != '-';
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
@@ -722,9 +716,23 @@ class _ProfilePageState extends State<ProfilePage> {
                     color: Colors.grey[800],
                     fontWeight: FontWeight.w600,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: maxLines,
+                  overflow:
+                      maxLines != null
+                          ? TextOverflow.ellipsis
+                          : TextOverflow.visible,
                 ),
+                if (hasSubtitle) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle.trim(),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -828,20 +836,11 @@ class _ProfilePageState extends State<ProfilePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        title: Text(
-          'Profil Saya',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.bold,
-            // color: AppColors.primary,
-            fontSize: 18,
-          ),
-        ),
+        title: const Text('Profil Saya'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.edit_outlined, color: Colors.white),
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Edit Profil',
             onPressed: () {
               Navigator.push(
                 context,
@@ -875,6 +874,13 @@ class _ProfilePageState extends State<ProfilePage> {
                     'Nama Lengkap',
                     _userData['name'] ?? '',
                   ),
+                  if (_userData['nik'] != null &&
+                      _userData['nik'].toString().isNotEmpty)
+                    _buildInfoItem(
+                      Icons.badge_outlined,
+                      'NIK',
+                      _userData['nik'].toString(),
+                    ),
                   _buildInfoItem(
                     Icons.wc_rounded,
                     'Jenis Kelamin',
@@ -923,6 +929,78 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ],
               ),
+              if (_userData['user_type_id'] == 2 ||
+                  _userData['user_type_id'] == '2' ||
+                  _userData.containsKey('puskesmas_id') ||
+                  _userData.containsKey('nik')) ...[
+                const SizedBox(height: 16),
+                Builder(
+                  builder: (context) {
+                    final puskInfo = formatPuskesmasDisplay(
+                      rawName: _userData['puskesmas_name']?.toString(),
+                      formattedName:
+                          _userData['puskesmas_formatted_name']?.toString(),
+                      subdistrictName:
+                          _userData['puskesmas_subdistrict_name']?.toString(),
+                      districtName:
+                          _userData['puskesmas_district_name']?.toString(),
+                      location: _userData['puskesmas_location']?.toString(),
+                      puskesmasMap:
+                          _userData['puskesmas'] is Map<String, dynamic>
+                              ? _userData['puskesmas']
+                              : (_userData['patient'] is Map &&
+                                      _userData['patient']['puskesmas'] is Map
+                                  ? Map<String, dynamic>.from(
+                                    _userData['patient']['puskesmas'],
+                                  )
+                                  : null),
+                    );
+
+                    return _buildSectionCard(
+                      title: 'Fasilitas Kesehatan',
+                      children: [
+                        _buildInfoItem(
+                          Icons.local_hospital_outlined,
+                          'Puskesmas',
+                          puskInfo.name,
+                          subtitle:
+                              puskInfo.location.isNotEmpty
+                                  ? puskInfo.location
+                                  : null,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                _buildSectionCard(
+                  title: 'Alamat Domisili',
+                  children: [
+                    _buildInfoItem(
+                      Icons.home_outlined,
+                      'Alamat Lengkap',
+                      formatFullAddress(
+                        address: _userData['address'],
+                        rt: _userData['rt']?.toString(),
+                        rw: _userData['rw']?.toString(),
+                        village:
+                            _userData['village_name'] ??
+                            _userData['village']?['name'],
+                        subdistrict:
+                            _userData['subdistrict_name'] ??
+                            _userData['subdistrict']?['name'],
+                        district:
+                            _userData['district_name'] ??
+                            _userData['district']?['name'],
+                        province:
+                            _userData['province_name'] ??
+                            _userData['province']?['name'],
+                      ),
+                      maxLines: null,
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 24),
               _buildLogoutRow(),
               const SizedBox(height: 20),

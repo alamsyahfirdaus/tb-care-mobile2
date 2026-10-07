@@ -7,10 +7,12 @@ import 'dart:io';
 
 import 'package:apk_tb_care/main/pasien/history.dart';
 import 'package:apk_tb_care/main/pasien/treatment_history.dart';
+import 'package:apk_tb_care/main/pasien/household_members_page.dart';
+import 'package:apk_tb_care/main/pasien/patient_medications_page.dart';
+import 'package:apk_tb_care/services/close_contact_service.dart';
 import 'package:apk_tb_care/connection.dart';
 import 'package:apk_tb_care/values/colors.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:image_picker/image_picker.dart';
 // ignore: depend_on_referenced_packages
@@ -45,6 +47,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
   bool _uploadedToday = false;
   bool _isUploading = false;
   bool _isSavingSchedule = false;
+  int? _householdMembersCount;
 
   static const String _lastMedicationTimeKey = 'last_medication_time';
 
@@ -62,6 +65,22 @@ class _TreatmentPageState extends State<TreatmentPage> {
       }
     });
     _patientFuture = _fetchPatientData();
+    _fetchHouseholdMembersCount();
+  }
+
+  Future<void> _fetchHouseholdMembersCount() async {
+    try {
+      final count = await CloseContactService.getContactCount(
+        patientId: widget.patientId,
+      );
+      if (mounted) {
+        setState(() {
+          _householdMembersCount = count;
+        });
+      }
+    } catch (e) {
+      debugPrint('[TreatmentPage] Error fetching household count: $e');
+    }
   }
 
   Future<bool> _isPatientUser() async {
@@ -96,6 +115,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
       setState(() {
         _patientFuture = _fetchPatientData();
       });
+      _fetchHouseholdMembersCount();
     }
     await Future.delayed(const Duration(milliseconds: 500));
   }
@@ -384,36 +404,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        systemOverlayStyle: SystemUiOverlayStyle.light,
-        title: Text(
-          'Pengobatan Saya',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            // color: AppColors.primary,
-          ),
-        ),
-        // actions: [
-        //   IconButton(
-        //     icon: const Icon(Icons.medication_rounded),
-        //     tooltip: 'Riwayat Minum Obat',
-        //     onPressed: () {
-        //       Navigator.push(
-        //         context,
-        //         MaterialPageRoute(
-        //           builder:
-        //               (context) =>
-        //                   MedicationHistoryPage(patientId: widget.patientId),
-        //         ),
-        //       );
-        //     },
-        //   ),
-        // ],
-      ),
+      appBar: AppBar(title: const Text('Pengobatan Saya')),
       body: RefreshIndicator(
         onRefresh: _refreshTreatmentPage,
         color: AppColors.primary,
@@ -437,8 +428,6 @@ class _TreatmentPageState extends State<TreatmentPage> {
                   _buildMainJourneyCard(_currentTreatment!),
                   const SizedBox(height: 20),
                   _buildMedicationScheduleCard(),
-                  const SizedBox(height: 24),
-                  _buildDrugList(_currentTreatment!['prescription'] ?? []),
                   const SizedBox(height: 24),
                   _buildHistorySection(),
                 ],
@@ -717,26 +706,10 @@ class _TreatmentPageState extends State<TreatmentPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Riwayat",
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          "Catatan aktivitas dan perjalanan pengobatan Anda",
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 12,
-            color: Colors.grey.shade500,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        _buildMedicationSection(),
         const SizedBox(height: 16),
         _buildHistoryActionCard(
-          icon: Icons.medication_rounded,
+          icon: Icons.access_time_rounded,
           title: "Riwayat Minum Obat",
           subtitle: "Lihat catatan bukti minum obat",
           onTap: () {
@@ -766,6 +739,27 @@ class _TreatmentPageState extends State<TreatmentPage> {
                     ),
               ),
             );
+          },
+        ),
+        const SizedBox(height: 12),
+        _buildHistoryActionCard(
+          icon: Icons.groups_outlined,
+          title: "Anggota Serumah",
+          subtitle:
+              _householdMembersCount != null
+                  ? '$_householdMembersCount anggota terdaftar'
+                  : "Kelola anggota yang tinggal serumah dengan Anda",
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (context) =>
+                        HouseholdMembersPage(patientId: widget.patientId),
+              ),
+            ).then((_) {
+              _fetchHouseholdMembersCount();
+            });
           },
         ),
       ],
@@ -803,7 +797,7 @@ class _TreatmentPageState extends State<TreatmentPage> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: AppColors.primary,
+                    color: AppColors.primary.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(icon, color: AppColors.primary, size: 22),
@@ -968,90 +962,44 @@ class _TreatmentPageState extends State<TreatmentPage> {
     );
   }
 
-  Widget _buildDrugList(List<dynamic> prescription) {
+  Widget _buildMedicationSection() {
+    final rawList = _currentTreatment?['prescription'];
+    int? count;
+    if (rawList is List) {
+      count = rawList.length;
+    }
+
+    final String subtitle;
+    if (count != null) {
+      subtitle =
+          count > 0 ? '$count obat terdaftar' : 'Belum ada obat terdaftar';
+    } else {
+      subtitle = 'Lihat obat pengobatan Anda';
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Daftar Obat",
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (prescription.isNotEmpty)
-          Column(
-            children:
-                prescription
-                    .map((drug) => _buildDrugCard(drug.toString()))
-                    .toList(),
-          )
-        else
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.grey.shade100, width: 1.5),
-            ),
-            child: Center(
-              child: Text(
-                "Tidak ada informasi obat.",
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13,
-                  color: Colors.grey.shade500,
-                  fontStyle: FontStyle.italic,
-                ),
+        _buildHistoryActionCard(
+          icon: Icons.medication_outlined,
+          title: "Daftar Obat",
+          subtitle: subtitle,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder:
+                    (context) => PatientMedicationsPage(
+                      patientId: widget.patientId,
+                      initialTreatment: _currentTreatment,
+                    ),
               ),
-            ),
-          ),
+            ).then((_) {
+              _refreshTreatmentPage();
+            });
+          },
+        ),
       ],
-    );
-  }
-
-  Widget _buildDrugCard(String drug) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade100, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.01),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.08),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.medication_rounded,
-            color: AppColors.primary,
-            size: 22,
-          ),
-        ),
-        title: Text(
-          drug,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-            color: Colors.grey.shade800,
-          ),
-        ),
-      ),
     );
   }
 
@@ -2091,18 +2039,25 @@ class _TreatmentPageState extends State<TreatmentPage> {
               borderRadius: BorderRadius.circular(4),
             ),
           ),
-          const SizedBox(height: 12),
-          for (int i = 0; i < 2; i++) ...[
-            Container(
-              height: 64,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey.shade100, width: 1.5),
-              ),
+          const SizedBox(height: 4),
+          Container(
+            width: 220,
+            height: 12,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(4),
             ),
-            const SizedBox(height: 12),
-          ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey.shade100, width: 1.5),
+            ),
+          ),
+          const SizedBox(height: 24),
           // Riwayat
           Container(
             width: 80,

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:apk_tb_care/connection.dart';
+import 'package:apk_tb_care/models/patient_medication.dart';
 import 'package:apk_tb_care/values/colors.dart';
 
 // ignore: must_be_immutable
@@ -98,17 +99,7 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
       appBar: AppBar(
-        title: Text(
-          'Riwayat Pengobatan',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: Colors.white,
-          ),
-        ),
-        backgroundColor: AppColors.primary,
-        iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 0,
+        title: const Text('Riwayat Pengobatan'),
       ),
       body: RefreshIndicator(
         onRefresh: _refreshHistory,
@@ -242,8 +233,12 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
       }
     }
 
-    final List prescriptions =
-        treatment['prescription'] is List ? treatment['prescription'] : [];
+    final rawMedications =
+        treatment['medications'] ?? treatment['prescription'];
+    final List<PatientMedication> medications = PatientMedication.parseList(
+      rawMedications,
+      defaultScheduleTime: medicationTime,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -389,16 +384,16 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
               ),
             ),
             const SizedBox(height: 8),
-            if (prescriptions.isNotEmpty)
+            if (medications.isNotEmpty)
               Column(
                 children:
-                    prescriptions
-                        .map((drug) => _buildDrugItem(drug.toString()))
+                    medications
+                        .map((drug) => _buildDrugItem(drug))
                         .toList(),
               )
             else
               Text(
-                'Tidak ada informasi obat.',
+                'Belum ada data obat untuk pengobatan ini.',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 13,
                   color: Colors.grey.shade500,
@@ -411,12 +406,25 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
     );
   }
 
-  Widget _buildDrugItem(String drugName) {
+  Widget _buildDrugItem(PatientMedication drug) {
+    final List<String> details = [];
+    if (drug.dosage != null && drug.dosage!.trim().isNotEmpty) {
+      details.add('Dosis: ${drug.dosage!.trim()}');
+    }
+    if (drug.frequency != null && drug.frequency!.trim().isNotEmpty) {
+      details.add(drug.frequency!.trim());
+    }
+    if (drug.rules != null && drug.rules!.trim().isNotEmpty) {
+      details.add(drug.rules!.trim());
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
+            margin: const EdgeInsets.only(top: 2),
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: Colors.blue.shade50,
@@ -430,14 +438,29 @@ class _TreatmentHistoryPageState extends State<TreatmentHistoryPage> {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              drugName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                color: Colors.grey.shade700,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  drug.name,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                if (details.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      details.join(' • '),
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

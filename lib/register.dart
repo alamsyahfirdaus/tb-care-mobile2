@@ -630,22 +630,11 @@ class _RegisterPageState extends State<RegisterPage> {
         child: Scaffold(
           backgroundColor: kLightBg,
           appBar: AppBar(
-            backgroundColor: kPrimaryColor,
-            elevation: 0,
-            centerTitle: false,
-            title: const Text(
-              "Buat Akun Pasien",
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
+            title: const Text("Buat Akun Pasien"),
             leading: IconButton(
               icon: const Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: Colors.white,
-                size: 20,
+                Icons.arrow_back_rounded,
+                size: 24,
               ),
               onPressed: () {
                 if (currentStep == 2) {
@@ -1781,13 +1770,15 @@ Widget buildPuskesmasAutocomplete({
   required List<dynamic> puskesmasList,
   required String? selectedValue,
   required ValueChanged<String> onSelected,
+  VoidCallback? onCleared,
+  String? labelText,
 }) {
   return LayoutBuilder(
     builder: (context, constraints) {
       final double fieldWidth = constraints.maxWidth;
 
       return Autocomplete<Map<String, dynamic>>(
-        displayStringForOption: (item) => item["name"],
+        displayStringForOption: (item) => item["name"]?.toString() ?? "",
         optionsBuilder: (TextEditingValue textEditingValue) {
           if (puskesmasList.isEmpty) {
             return const Iterable<Map<String, dynamic>>.empty();
@@ -1804,6 +1795,7 @@ Widget buildPuskesmasAutocomplete({
           );
         },
         onSelected: (item) {
+          controller.text = item["name"]?.toString() ?? "";
           onSelected(item["id"].toString());
         },
         fieldViewBuilder: (
@@ -1812,6 +1804,11 @@ Widget buildPuskesmasAutocomplete({
           focusNode,
           onFieldSubmitted,
         ) {
+          // Sync text field to controller when initialized externally
+          if (controller.text.isNotEmpty && textController.text.isEmpty) {
+            textController.text = controller.text;
+          }
+
           // Sync text field to selected value on initial load / state updates
           if (selectedValue != null && textController.text.isEmpty) {
             final index = puskesmasList.indexWhere(
@@ -1819,7 +1816,8 @@ Widget buildPuskesmasAutocomplete({
             );
 
             if (index != -1) {
-              textController.text = puskesmasList[index]["name"];
+              textController.text = puskesmasList[index]["name"]?.toString() ?? "";
+              controller.text = textController.text;
             }
           }
 
@@ -1836,22 +1834,48 @@ Widget buildPuskesmasAutocomplete({
             controller: textController,
             focusNode: focusNode,
             autovalidateMode: AutovalidateMode.onUserInteraction,
+            onChanged: (val) {
+              if (val.isEmpty && selectedValue != null) {
+                if (onCleared != null) onCleared();
+              }
+            },
             decoration: buildInputDecoration(
-              labelText: "Puskesmas",
+              labelText: labelText ?? "Puskesmas",
               hintText: "Cari Puskesmas...",
               prefixIcon: Icons.local_hospital_rounded,
+            ).copyWith(
+              suffixIcon: (selectedValue != null && selectedValue.isNotEmpty)
+                  ? IconButton(
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: kSubtitleColor,
+                      ),
+                      tooltip: "Hapus Pilihan",
+                      onPressed: () {
+                        textController.clear();
+                        controller.clear();
+                        if (onCleared != null) onCleared();
+                      },
+                    )
+                  : const Icon(
+                      Icons.arrow_drop_down_rounded,
+                      color: kSubtitleColor,
+                    ),
             ),
             validator: (_) {
               if (selectedValue == null || selectedValue.isEmpty) {
                 return "Puskesmas wajib dipilih.";
               }
-              final index = puskesmasList.indexWhere(
-                (e) => e["id"].toString() == selectedValue,
-              );
-              if (index == -1 ||
-                  textController.text.trim() !=
-                      puskesmasList[index]["name"].toString().trim()) {
-                return "Pilih puskesmas dari daftar";
+              if (puskesmasList.isNotEmpty) {
+                final index = puskesmasList.indexWhere(
+                  (e) => e["id"].toString() == selectedValue,
+                );
+                if (index != -1 &&
+                    textController.text.trim() !=
+                        puskesmasList[index]["name"].toString().trim()) {
+                  return "Pilih puskesmas dari daftar";
+                }
               }
               return null;
             },

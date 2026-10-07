@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:apk_tb_care/main/pasien/materi_detail.dart';
 import 'package:apk_tb_care/connection.dart';
-import 'package:apk_tb_care/values/colors.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
@@ -31,6 +30,11 @@ class _EducationPageState extends State<EducationPage>
   bool _isLoading = true;
   bool _isError = false;
   String _token = '';
+
+  bool _isItemPublished(dynamic isPublish) {
+    if (isPublish == null) return false;
+    return isPublish == 1 || isPublish == true || isPublish == '1';
+  }
 
   @override
   void initState() {
@@ -359,7 +363,7 @@ class _EducationPageState extends State<EducationPage>
     File? imageFile;
     String? imageFileName;
     String selectedType = material?['material_type'] ?? 'image';
-    bool isPublish = material?['is_publish'] == 1 || !isEdit;
+    bool isPublish = _isItemPublished(material?['is_publish']) || !isEdit;
     bool isDialogSaving = false;
 
     Future<void> pickImage(StateSetter dialogSetState) async {
@@ -704,25 +708,16 @@ class _EducationPageState extends State<EducationPage>
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text(
-          "Materi Edukasi",
-          style: GoogleFonts.plusJakartaSans(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: AppColors.primary,
-        elevation: 0.5,
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text("Materi Edukasi"),
         actions: [
           if (widget.isStaff)
             IconButton(
               icon: const Icon(
                 Icons.add_circle_outline_rounded,
-                color: Colors.blue,
-                size: 28,
+                color: Colors.white,
+                size: 24,
               ),
+              tooltip: 'Tambah Materi',
               onPressed: () => _showAddEditMaterialDialog(),
             ),
         ],
@@ -761,20 +756,26 @@ class _EducationPageState extends State<EducationPage>
           _buildRefreshableTab(
             _materials
                 .where(
-                  (m) => m['material_type'] == "image" && m['is_publish'] == 1,
+                  (m) =>
+                      m['material_type'] == "image" &&
+                      _isItemPublished(m['is_publish']),
                 )
                 .toList(),
           ),
           _buildRefreshableTab(
             _materials
                 .where(
-                  (m) => m['material_type'] == "video" && m['is_publish'] == 1,
+                  (m) =>
+                      m['material_type'] == "video" &&
+                      _isItemPublished(m['is_publish']),
                 )
                 .toList(),
           ),
           if (widget.isStaff)
             _buildRefreshableDraftTab(
-              _materials.where((m) => m['is_publish'] != 1).toList(),
+              _materials
+                  .where((m) => !_isItemPublished(m['is_publish']))
+                  .toList(),
             ),
         ],
       ),
@@ -935,7 +936,7 @@ class _EducationPageState extends State<EducationPage>
 
   Widget _buildMaterialCard(Map<String, dynamic> material) {
     final materialType = material['material_type'] ?? 'unknown';
-    final isDraft = material['is_publish'] != 1;
+    final isDraft = !_isItemPublished(material['is_publish']);
     final title = material['title_material'] ?? 'Judul tidak tersedia';
     final description = material['description'] ?? '';
     final createdAt = material['created_at'];
@@ -1124,10 +1125,12 @@ class _EducationPageState extends State<EducationPage>
 
     if (materialType == 'image') {
       final photo = material['photo'];
-      if (photo != null && photo.isNotEmpty) {
+      final imageUrl = _resolveImageUrl(photo?.toString());
+      if (imageUrl != null && imageUrl.isNotEmpty) {
         return CachedNetworkImage(
-          imageUrl: '${Connection.BASE_URL}/image/$photo',
-          httpHeaders: {'Authorization': 'Bearer $_token'},
+          imageUrl: imageUrl,
+          httpHeaders:
+              _token.isNotEmpty ? {'Authorization': 'Bearer $_token'} : null,
           fit: BoxFit.cover,
           placeholder:
               (context, url) => Container(
@@ -1141,14 +1144,19 @@ class _EducationPageState extends State<EducationPage>
                 ),
               ),
           errorWidget:
-              (context, url, error) => Container(
-                color: Colors.grey[100],
-                child: Icon(
-                  Icons.broken_image_outlined,
-                  color: Colors.grey[400],
-                  size: 40,
-                ),
-              ),
+              (context, url, error) {
+                debugPrint(
+                  '[EducationMedia] Image load error for url: $url, error: $error',
+                );
+                return Container(
+                  color: Colors.grey[100],
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.grey[400],
+                    size: 40,
+                  ),
+                );
+              },
         );
       } else {
         return Container(
@@ -1240,6 +1248,10 @@ class _EducationPageState extends State<EducationPage>
     return null;
   }
 
+  String? _resolveImageUrl(String? photo) {
+    return Connection.resolveImageUrl(photo);
+  }
+
   IconData _getMaterialTypeIcon(String type) {
     switch (type) {
       case 'video':
@@ -1263,7 +1275,7 @@ class _EducationPageState extends State<EducationPage>
   }
 
   void _handleMaterialTap(Map<String, dynamic> material) async {
-    if (material['is_publish'] != 1 && !widget.isStaff) {
+    if (!_isItemPublished(material['is_publish']) && !widget.isStaff) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Materi ini belum dipublikasikan')),
       );

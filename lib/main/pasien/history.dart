@@ -681,17 +681,7 @@ class _MedicationHistoryPageState extends State<MedicationHistoryPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text(
-          'Riwayat Minum Obat',
-          style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: Colors.white,
-          ),
-        ),
-        backgroundColor: AppColors.primary,
-        iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 0,
+        title: const Text('Riwayat Minum Obat'),
         // actions: [
         //   IconButton(
         //     icon: const Icon(Icons.filter_alt_rounded),

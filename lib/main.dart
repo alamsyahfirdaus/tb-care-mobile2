@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:apk_tb_care/services/notification_service.dart';
 import 'package:apk_tb_care/main/pasien/materi_detail.dart';
+import 'package:apk_tb_care/values/theme.dart';
 
 class MyHttpOverrides extends HttpOverrides {
   @override
@@ -181,15 +182,7 @@ class _MainAppState extends State<MainApp> {
       title: 'TB Care',
       navigatorKey: navigatorKey, // Gunakan navigatorKey global untuk routing
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primaryColor: Colors.blue[100],
-        scaffoldBackgroundColor: Colors.white,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue[100]!,
-          primary: Colors.blue,
-          secondary: Colors.amber,
-        ),
-      ),
+      theme: AppTheme.theme,
       home: _startPage,
     );
   }

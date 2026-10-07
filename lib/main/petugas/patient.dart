@@ -627,35 +627,11 @@ class _PatientPageState extends State<PatientPage> {
       backgroundColor: const Color(0xFFF8FAFC),
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-        centerTitle: false,
-        leading:
-            Navigator.canPop(context)
-                ? IconButton(
-                  icon: const Icon(
-                    Icons.arrow_back_ios_new_rounded,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                )
-                : null,
-        title: Text(
-          'TB Care',
-          style: GoogleFonts.plusJakartaSans(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        title: const Text('TB Care'),
         actions: [
           IconButton(
             tooltip: 'Segarkan Data',
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
+            icon: const Icon(Icons.refresh_rounded),
             onPressed: _fetchPatientData,
           ),
         ],

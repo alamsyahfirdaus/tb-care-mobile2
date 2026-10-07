@@ -1958,20 +1958,7 @@ class _StaffHomePageState extends State<StaffHomePage> {
       appBar:
           _selectedIndex == 0
               ? AppBar(
-                backgroundColor: AppColors.primary,
-                elevation: 0,
-                centerTitle: false,
-                title: Text(
-                  'TB Care',
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(1),
-                  child: Container(color: Colors.grey.shade100, height: 1),
-                ),
+                title: const Text('TB Care'),
               )
               : null,
       body: IndexedStack(

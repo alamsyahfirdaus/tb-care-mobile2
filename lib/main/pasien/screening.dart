@@ -4,12 +4,15 @@ import 'dart:convert';
 import 'dart:developer';
 
 import 'package:apk_tb_care/connection.dart';
+import 'package:apk_tb_care/models/close_contact.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ScreeningPage extends StatefulWidget {
-  const ScreeningPage({super.key});
+  final CloseContact? contact;
+
+  const ScreeningPage({super.key, this.contact});
 
   @override
   State<ScreeningPage> createState() => _ScreeningPageState();
@@ -30,7 +33,68 @@ class _ScreeningPageState extends State<ScreeningPage> {
   @override
   void initState() {
     super.initState();
-    _loadCategories();
+    if (widget.contact != null) {
+      _initContactScreening();
+    } else {
+      _loadCategories();
+    }
+  }
+
+  Future<void> _initContactScreening() async {
+    setState(() {
+      _isLoading = true;
+      _loadingText = "Menyiapkan skrining untuk ${widget.contact!.name}...";
+    });
+    final session = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final token = session.getString('token') ?? '';
+
+    try {
+      final response = await http.get(
+        Uri.parse('${Connection.BASE_URL}/screening/categories'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (!mounted) return;
+
+      int selectedCatId = widget.contact!.age < 15 ? 2 : 1;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final list = data['data'] as List<dynamic>? ?? [];
+        categories = list;
+
+        final contactAge = widget.contact!.age;
+        for (var cat in list) {
+          final minAge = cat['min_age'] is int
+              ? cat['min_age'] as int
+              : int.tryParse(cat['min_age']?.toString() ?? '');
+          final maxAge = cat['max_age'] is int
+              ? cat['max_age'] as int
+              : int.tryParse(cat['max_age']?.toString() ?? '');
+          final catId = cat['id'] is int
+              ? cat['id'] as int
+              : int.tryParse(cat['id']?.toString() ?? '1') ?? 1;
+
+          if (minAge != null && contactAge < minAge) continue;
+          if (maxAge != null && contactAge > maxAge) continue;
+          selectedCatId = catId;
+          break;
+        }
+      }
+
+      setState(() {
+        _selectedCategoryId = selectedCatId;
+      });
+
+      await _loadQuestions(selectedCatId);
+    } catch (e) {
+      if (!mounted) return;
+      final fallbackCatId = widget.contact!.age < 15 ? 2 : 1;
+      setState(() {
+        _selectedCategoryId = fallbackCatId;
+      });
+      await _loadQuestions(fallbackCatId);
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -117,13 +181,23 @@ class _ScreeningPageState extends State<ScreeningPage> {
               .map((e) => {'question_id': e.key, 'answer': e.value})
               .toList();
 
+      final Map<String, dynamic> bodyPayload = {
+        'answers': answerList,
+      };
+      if (widget.contact != null) {
+        bodyPayload['close_contact_id'] = widget.contact!.id;
+      }
+      if (_selectedCategoryId != null) {
+        bodyPayload['category_id'] = _selectedCategoryId;
+      }
+
       final response = await http.post(
         Uri.parse('${Connection.BASE_URL}/screening/submit'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'answers': answerList}),
+        body: jsonEncode(bodyPayload),
       );
       if (!mounted) return;
 
@@ -132,7 +206,14 @@ class _ScreeningPageState extends State<ScreeningPage> {
         setState(() {
           _result = {
             'result': data['result'] ?? 'Tidak Diketahui',
+            'risk_level':
+                data['risk_level'] ??
+                data['data']?['risk_level'] ??
+                'Risiko Rendah',
             'message': data['message'] ?? 'Hasil skrining diterima',
+            'recommendation':
+                data['recommendation'] ?? data['data']?['recommendation'],
+            'data': data['data'],
           };
           _showResultScreen = true;
           _isLoading = false;
@@ -203,30 +284,17 @@ class _ScreeningPageState extends State<ScreeningPage> {
     required VoidCallback? onBackPressed,
   }) {
     return AppBar(
-      backgroundColor: const Color(0xFF1565C0),
-      foregroundColor: Colors.white,
-      elevation: 0,
-      centerTitle: false,
       automaticallyImplyLeading: false,
-      title: Text(
-        title,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-          fontSize: 18,
-        ),
-      ),
-      leading:
-          onBackPressed != null
-              ? IconButton(
-                icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                onPressed: onBackPressed,
-              )
-              : null,
+      title: Text(title),
+      leading: onBackPressed != null
+          ? IconButton(
+              icon: const Icon(
+                Icons.arrow_back_rounded,
+                size: 24,
+              ),
+              onPressed: onBackPressed,
+            )
+          : null,
     );
   }
 
@@ -452,11 +520,21 @@ class _ScreeningPageState extends State<ScreeningPage> {
   // ================= STAGE 2: SCREENING QUESTIONS =================
   Widget _buildQuestionScreen() {
     final allQuestions = _getAllQuestions();
+    final pageTitle = widget.contact != null
+        ? "Skrining: ${widget.contact!.name}"
+        : "Skrining Gejala TB";
+
     if (allQuestions.isEmpty) {
       return Scaffold(
         appBar: _buildAppBar(
-          title: "Skrining Gejala TB",
-          onBackPressed: () => setState(() => _selectedCategoryId = null),
+          title: pageTitle,
+          onBackPressed: () {
+            if (widget.contact != null) {
+              Navigator.of(context).pop();
+            } else {
+              setState(() => _selectedCategoryId = null);
+            }
+          },
         ),
         body: Center(
           child: Padding(
@@ -482,7 +560,13 @@ class _ScreeningPageState extends State<ScreeningPage> {
                 SizedBox(
                   height: 52,
                   child: OutlinedButton(
-                    onPressed: () => setState(() => _selectedCategoryId = null),
+                    onPressed: () {
+                      if (widget.contact != null) {
+                        Navigator.of(context).pop();
+                      } else {
+                        setState(() => _selectedCategoryId = null);
+                      }
+                    },
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 48),
                       foregroundColor: const Color(0xFF1565C0),
@@ -514,13 +598,58 @@ class _ScreeningPageState extends State<ScreeningPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      appBar: _buildAppBar(title: "Skrining Gejala TB", onBackPressed: null),
+      appBar: _buildAppBar(
+        title: pageTitle,
+        onBackPressed: () {
+          if (_currentStep > 0) {
+            setState(() => _currentStep--);
+          } else if (widget.contact != null) {
+            Navigator.of(context).pop();
+          } else {
+            setState(() => _selectedCategoryId = null);
+          }
+        },
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (widget.contact != null) ...[
+                Container(
+                  margin: const EdgeInsets.only(bottom: 20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEFF6FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFBFDBFE)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.person_rounded,
+                        size: 20,
+                        color: Color(0xFF1E88E5),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          "Skrining Anggota: ${widget.contact!.name} (${widget.contact!.relationship}) • ${widget.contact!.age} th",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF1E40AF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               // Progress Bar Section
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -738,7 +867,11 @@ class _ScreeningPageState extends State<ScreeningPage> {
                       child: OutlinedButton.icon(
                         onPressed: () {
                           if (_currentStep == 0) {
-                            setState(() => _selectedCategoryId = null);
+                            if (widget.contact != null) {
+                              Navigator.of(context).pop();
+                            } else {
+                              setState(() => _selectedCategoryId = null);
+                            }
                           } else {
                             setState(() => _currentStep--);
                           }
@@ -833,181 +966,245 @@ class _ScreeningPageState extends State<ScreeningPage> {
     final themeBorderColor =
         isSuspected ? const Color(0xFFFFE5D9) : const Color(0xFFD1FAE5);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: _buildAppBar(title: "Hasil Skrining", onBackPressed: null),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Result Card
-              Container(
-                decoration: BoxDecoration(
-                  color: themeBgColor,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: themeBorderColor, width: 1.5),
-                  boxShadow: [
-                    BoxShadow(
-                      color: themeColor.withOpacity(0.04),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 76,
-                      height: 76,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        isSuspected
-                            ? Icons.warning_amber_rounded
-                            : Icons.check_circle_rounded,
-                        color: themeColor,
-                        size: 40,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      isSuspected ? "Terduga TB" : "Tidak Terduga TB",
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: themeColor,
-                        letterSpacing: 0.5,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      isSuspected
-                          ? "Hasil skrining menunjukkan adanya gejala yang perlu diperiksa lebih lanjut. Hasil ini bukan diagnosis TB."
-                          : "Berdasarkan jawaban yang diberikan, hasil skrining tidak menunjukkan gejala yang mengarah pada terduga TB. Hasil skrining ini bukan diagnosis medis.",
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Color(0xFF64748B),
-                        height: 1.45,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 28),
-
-              // Recommendations Section (Only for Suspected)
-              if (isSuspected) ...[
-                const Text(
-                  "Rekomendasi Langkah Selanjutnya",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _buildRecommendationCard(
-                  Icons.local_hospital_rounded,
-                  "Kunjungi fasilitas kesehatan",
-                  "Segera kunjungi fasilitas kesehatan untuk mendapatkan pemeriksaan dan penilaian lebih lanjut dari petugas kesehatan.",
-                ),
-                const SizedBox(height: 12),
-                _buildRecommendationCard(
-                  Icons.masks_rounded,
-                  "Gunakan masker dan batasi kontak dekat",
-                  "Gunakan masker dan hindari kontak dekat dengan orang lain, terutama di ruang tertutup, hingga mendapatkan pemeriksaan lebih lanjut.",
-                ),
-                const SizedBox(height: 12),
-                _buildRecommendationCard(
-                  Icons.fact_check_rounded,
-                  "Ikuti anjuran petugas kesehatan",
-                  "Ikuti pemeriksaan dan anjuran petugas kesehatan. Jika dinyatakan TB, jalani pengobatan sesuai petunjuk hingga selesai.",
-                ),
-                const SizedBox(height: 24),
-              ] else ...[
-                // Info for non-suspected
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        Navigator.of(context).pop(true);
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
+        appBar: _buildAppBar(
+          title: "Hasil Skrining",
+          onBackPressed: () => Navigator.of(context).pop(true),
+        ),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Result Card
                 Container(
-                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: const Color(0xFFE2E8F0),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.shield_outlined,
-                        color: Color(0xFF10B981),
-                        size: 32,
+                    color: themeBgColor,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: themeBorderColor, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: themeColor.withOpacity(0.04),
+                        blurRadius: 16,
+                        offset: const Offset(0, 8),
                       ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text(
-                              "Tetap Jaga Kesehatan",
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0F172A),
-                              ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    children: [
+                      if (widget.contact != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6,
+                          ),
+                          margin: const EdgeInsets.only(bottom: 16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: themeBorderColor),
+                          ),
+                          child: Text(
+                            "Skrining: ${widget.contact!.name} (${widget.contact!.relationship})",
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: themeColor,
                             ),
-                            SizedBox(height: 4),
-                            Text(
-                              "Terapkan pola hidup sehat, jaga sirkulasi udara, dan perhatikan kondisi kesehatan. Jika muncul atau menetap gejala yang mengkhawatirkan, segera konsultasikan dengan petugas kesehatan.",
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF64748B),
-                                height: 1.4,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
+                      ],
+                      Container(
+                        width: 76,
+                        height: 76,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          isSuspected
+                              ? Icons.warning_amber_rounded
+                              : Icons.check_circle_rounded,
+                          color: themeColor,
+                          size: 40,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        isSuspected ? "Terduga TB" : "Tidak Terduga TB",
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: themeColor,
+                          letterSpacing: 0.5,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      if (_result?['risk_level'] != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: themeColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            "Tingkat Risiko: ${_result!['risk_level']}",
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: themeColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Text(
+                        isSuspected
+                            ? "Hasil skrining menunjukkan adanya gejala yang perlu diperiksa lebih lanjut. Hasil ini bukan diagnosis TB."
+                            : "Berdasarkan jawaban yang diberikan, hasil skrining tidak menunjukkan gejala yang mengarah pada terduga TB. Hasil skrining ini bukan diagnosis medis.",
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF64748B),
+                          height: 1.45,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
-              ],
+                const SizedBox(height: 28),
 
-              // Back Button
-              SizedBox(
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
-                  icon: const Icon(Icons.done_rounded, size: 18),
-                  label: const Text(
-                    "Selesai",
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF1565C0),
-                    side: const BorderSide(
-                      color: Color(0xFF1565C0),
-                      width: 1.5,
+                // Recommendations Section (Only for Suspected)
+                if (isSuspected) ...[
+                  const Text(
+                    "Rekomendasi Langkah Selanjutnya",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F172A),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildRecommendationCard(
+                    Icons.local_hospital_rounded,
+                    "Kunjungi fasilitas kesehatan",
+                    _result?['recommendation'] != null &&
+                            _result!['recommendation'].toString().isNotEmpty
+                        ? _result!['recommendation'].toString()
+                        : "Segera kunjungi fasilitas kesehatan untuk mendapatkan pemeriksaan dan penilaian lebih lanjut dari petugas kesehatan.",
+                  ),
+                  const SizedBox(height: 12),
+                  _buildRecommendationCard(
+                    Icons.masks_rounded,
+                    "Gunakan masker dan batasi kontak dekat",
+                    "Gunakan masker dan hindari kontak dekat dengan orang lain, terutama di ruang tertutup, hingga mendapatkan pemeriksaan lebih lanjut.",
+                  ),
+                  const SizedBox(height: 12),
+                  _buildRecommendationCard(
+                    Icons.fact_check_rounded,
+                    "Ikuti anjuran petugas kesehatan",
+                    "Ikuti pemeriksaan dan anjuran petugas kesehatan. Jika dinyatakan TB, jalani pengobatan sesuai petunjuk hingga selesai.",
+                  ),
+                  const SizedBox(height: 24),
+                ] else ...[
+                  // Info for non-suspected
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: const Color(0xFFE2E8F0),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.shield_outlined,
+                          color: Color(0xFF10B981),
+                          size: 32,
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                "Tetap Jaga Kesehatan",
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _result?['recommendation'] != null &&
+                                        _result!['recommendation']
+                                            .toString()
+                                            .isNotEmpty
+                                    ? _result!['recommendation'].toString()
+                                    : "Terapkan pola hidup sehat, jaga sirkulasi udara, dan perhatikan kondisi kesehatan. Jika muncul atau menetap gejala yang mengkhawatirkan, segera konsultasikan dengan petugas kesehatan.",
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF64748B),
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+
+                // Back Button
+                SizedBox(
+                  height: 52,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop(true);
+                    },
+                    icon: const Icon(Icons.done_rounded, size: 18),
+                    label: const Text(
+                      "Selesai",
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF1565C0),
+                      side: const BorderSide(
+                        color: Color(0xFF1565C0),
+                        width: 1.5,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

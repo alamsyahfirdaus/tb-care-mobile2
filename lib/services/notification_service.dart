@@ -89,15 +89,15 @@ class NotificationService {
       final data = message.data;
 
       if (notification != null) {
-        final materialIdStr = data['material_id'] ?? '';
-        final materialId = int.tryParse(materialIdStr);
+        final materialIdStr = data['education_id'] ?? data['material_id'] ?? '';
+        final materialId = int.tryParse(materialIdStr.toString());
 
         // Mencegah duplicate local notifications jika ID materi sama
         _showLocalNotification(
           id: materialId ?? message.hashCode,
           title: notification.title ?? 'Materi Edukasi Baru',
           body: notification.body ?? '',
-          payload: materialIdStr,
+          payload: materialIdStr.toString(),
         );
       }
     });
@@ -105,8 +105,8 @@ class NotificationService {
     // 6. Listen to notification taps when app is in background (but running)
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint("Notification tapped from background state: ${message.data}");
-      final materialIdStr = message.data['material_id'] ?? '';
-      final materialId = int.tryParse(materialIdStr);
+      final materialIdStr = message.data['education_id'] ?? message.data['material_id'] ?? '';
+      final materialId = int.tryParse(materialIdStr.toString());
       if (materialId != null) {
         routeToDetail(materialId);
       }
@@ -118,8 +118,8 @@ class NotificationService {
       debugPrint(
         "Notification tapped from terminated state: ${initialMessage.data}",
       );
-      final materialIdStr = initialMessage.data['material_id'] ?? '';
-      final materialId = int.tryParse(materialIdStr);
+      final materialIdStr = initialMessage.data['education_id'] ?? initialMessage.data['material_id'] ?? '';
+      final materialId = int.tryParse(materialIdStr.toString());
       if (materialId != null) {
         pendingMaterialId = materialId;
       }

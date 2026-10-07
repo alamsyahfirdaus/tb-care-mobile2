@@ -1,29 +1,32 @@
-import 'dart:convert';
+// ignore_for_file: deprecated_member_use
+
+import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
-import 'dart:async';
 
-import 'package:apk_tb_care/main/pasien/consultation.dart';
-import 'package:apk_tb_care/main/pasien/education.dart';
-import 'package:apk_tb_care/connection.dart';
-import 'package:apk_tb_care/profile.dart';
-import 'package:apk_tb_care/main/pasien/treatment.dart';
-import 'package:apk_tb_care/alarm_service.dart';
-import 'package:apk_tb_care/main/login.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-// ignore: depend_on_referenced_packages
-import 'package:path_provider/path_provider.dart';
-// ignore: depend_on_referenced_packages
+import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image/image.dart' as img;
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+import 'package:apk_tb_care/alarm_service.dart';
+import 'package:apk_tb_care/connection.dart';
+import 'package:apk_tb_care/main/login.dart';
+import 'package:apk_tb_care/main/pasien/consultation.dart';
+import 'package:apk_tb_care/main/pasien/education.dart';
+import 'package:apk_tb_care/main/pasien/materi_detail.dart';
+import 'package:apk_tb_care/main/pasien/treatment.dart';
+import 'package:apk_tb_care/main/pasien/visit_schedule_page.dart';
+import 'package:apk_tb_care/models/patient_home_model.dart';
+import 'package:apk_tb_care/profile.dart';
+import 'package:apk_tb_care/services/patient_home_service.dart';
 import 'package:apk_tb_care/values/colors.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class HomePage extends StatefulWidget {
   final String name;
@@ -43,51 +46,137 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
-  late Future<Map<String, dynamic>> _patientDataFuture;
+  final Set<int> _visitedTabs = {0};
 
-  String? _currentTreatmentId;
-  bool _uploadedToday = false;
+  // State Management
+  PatientHomeData? _homeData;
+  HomeServiceException? _error;
+  bool _isLoading = true;
+  bool _isRefreshing = false;
   bool _isUploading = false;
   bool _alarmSetupCompleted = false;
+  String _token = '';
+
+  String? get _currentTreatmentId =>
+      _homeData?.treatment?.id != null && _homeData!.treatment!.id > 0
+          ? _homeData!.treatment!.id.toString()
+          : null;
+
+  bool get _uploadedToday => _homeData?.medication?.isTakenToday == true;
 
   @override
   void initState() {
     super.initState();
-    _patientDataFuture = _fetchPatientData();
+    _loadInitialData();
+  }
+
+  // ===================== DATA LOADING =====================
+  Future<void> _loadInitialData() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      _token = prefs.getString('token') ?? '';
+    }
+
+    // 1. Tampilkan data dari cache lokal secara instan jika ada
+    final cachedData = await PatientHomeService.getCachedHomeData(
+      widget.patientId,
+    );
+    if (mounted && cachedData != null) {
+      setState(() {
+        _homeData = cachedData;
+        _isLoading = false;
+      });
+      _setupAlarmIfNeeded(cachedData);
+    }
+
+    // 2. Muat data terbaru dari API di background / pertama kali
+    await _fetchData(isBackground: cachedData != null);
+  }
+
+  Future<void> _fetchData({bool isBackground = false}) async {
+    if (!isBackground) {
+      setState(() {
+        _isLoading = _homeData == null;
+        _error = null;
+      });
+    }
+
+    try {
+      final freshData = await PatientHomeService.getPatientHome(
+        patientId: widget.patientId,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _homeData = freshData;
+        _error = null;
+        _isLoading = false;
+        _isRefreshing = false;
+      });
+
+      _setupAlarmIfNeeded(freshData);
+    } on HomeServiceException catch (e) {
+      if (!mounted) return;
+      if (e.type == HomeErrorType.unauthorized) {
+        _handleUnauthorized();
+        return;
+      }
+
+      setState(() {
+        _error = e;
+        _isLoading = false;
+        _isRefreshing = false;
+      });
+
+      // Jika sudah ada data dari cache, tampilkan info banner tanpa menutupi layar
+      if (_homeData != null) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(
+                  Icons.cloud_off_rounded,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Menampilkan data tersimpan. ${e.message}',
+                    style: GoogleFonts.plusJakartaSans(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFF334155),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = HomeServiceException(
+          title: 'Data belum dapat dimuat',
+          message: 'Terjadi kendala saat memuat data. Silakan coba kembali.',
+          type: HomeErrorType.general,
+        );
+        _isLoading = false;
+        _isRefreshing = false;
+      });
+    }
   }
 
   Future<void> _refreshHome() async {
-    if (mounted) {
-      setState(() {
-        _patientDataFuture = _fetchPatientData();
-      });
-    }
-    try {
-      await _patientDataFuture;
-    } catch (_) {}
-  }
-
-  Future<bool> _isPatientUser() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getInt('user_type_id') == 2;
-  }
-
-  String _formatTime(dynamic value) {
-    if (value == null) return "--:--";
-    final str = value.toString().trim();
-    if (str.isEmpty) return "--:--";
-    if (str.length >= 5) {
-      try {
-        return str.substring(0, 5);
-      } catch (_) {
-        return str;
-      }
-    }
-    return str;
+    if (_isRefreshing) return;
+    setState(() => _isRefreshing = true);
+    await _fetchData(isBackground: false);
   }
 
   Future<void> _handleUnauthorized() async {
     final prefs = await SharedPreferences.getInstance();
+    await PatientHomeService.clearCache();
     await prefs.remove('token');
     await prefs.remove('user_name');
     await prefs.remove('user_id');
@@ -103,212 +192,44 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // ===================== UPLOAD CHECK =====================
-  Future<void> _checkTodayUpload() async {
-    if (widget.patientId == null) return;
+  // ===================== ALARM =====================
+  Future<void> _setupAlarmIfNeeded(PatientHomeData data) async {
+    if (_alarmSetupCompleted) return;
 
     try {
-      final session = await SharedPreferences.getInstance();
-      final token = session.getString('token');
-      if (token == null || token.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      final isPatient = prefs.getInt('user_type_id') == 2;
+      if (!isPatient) return;
 
-      final response = await http
-          .get(
-            Uri.parse(
-              '${Connection.BASE_URL}/treatments/${widget.patientId}/history?per_page=1',
-            ),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 10));
+      final reminderTime =
+          data.medication?.reminderTime ?? data.treatment?.medicationTime;
+      if (reminderTime == null || reminderTime.trim().isEmpty) return;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data == null || data['data'] == null) {
-          if (mounted) {
-            setState(() {
-              _uploadedToday = false;
-            });
-          }
-          return;
-        }
-
-        final historyList = data['data'];
-        if (historyList is! List) {
-          if (mounted) {
-            setState(() {
-              _uploadedToday = false;
-            });
-          }
-          return;
-        }
-
-        final today = DateTime.now();
-        bool uploaded = false;
-
-        if (historyList.isNotEmpty) {
-          final firstHistory = historyList.first;
-          if (firstHistory != null && firstHistory['submitted_at'] != null) {
-            final submittedAtStr = firstHistory['submitted_at'].toString();
-            final submittedAt = DateTime.tryParse(submittedAtStr);
-            if (submittedAt != null) {
-              uploaded =
-                  submittedAt.year == today.year &&
-                  submittedAt.month == today.month &&
-                  submittedAt.day == today.day;
-            }
-          }
-        }
-
-        if (mounted) {
-          setState(() {
-            _uploadedToday = uploaded;
-          });
-        }
-      } else if (response.statusCode == 401) {
-        if (mounted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _handleUnauthorized();
-          });
-        }
-      }
-    } catch (e) {
-      log('Error checking today upload: $e');
-    }
-  }
-
-  // ===================== FETCH PATIENT =====================
-  Future<Map<String, dynamic>> _fetchPatientData() async {
-    if (widget.patientId == null) {
-      throw Exception('ID Pasien tidak ditemukan. Silakan login ulang.');
-    }
-
-    final session = await SharedPreferences.getInstance();
-    final token = session.getString('token');
-    if (token == null || token.isEmpty) {
-      throw Exception('Sesi telah berakhir. Silakan login kembali.');
-    }
-
-    try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '${Connection.BASE_URL}/patients/${widget.patientId}/show',
-            ),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data == null || data['data'] == null) {
-          throw Exception('Data kosong dari server.');
-        }
-        final patientData = data['data'] as Map<String, dynamic>;
-
-        // Setup alarm once patient data is fetched successfully
-        _setupAlarmIfNeeded(patientData);
-        // Refresh upload status today
-        _checkTodayUpload();
-
-        // Update current treatment ID immediately
-        final treatments = patientData['treatments'] as List<dynamic>? ?? [];
-        if (treatments.isNotEmpty) {
-          final currentTreatment = treatments[0];
-          if (currentTreatment != null && currentTreatment['id'] != null) {
-            _currentTreatmentId = currentTreatment['id'].toString();
-          }
-        }
-
-        return patientData;
-      } else if (response.statusCode == 401) {
-        if (mounted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _handleUnauthorized();
-          });
-        }
-        throw Exception('Sesi telah berakhir. Silakan login kembali.');
-      } else if (response.statusCode == 403) {
-        throw Exception(
-          'Akses ditolak. Anda tidak memiliki izin untuk melihat data ini.',
-        );
-      } else if (response.statusCode == 404) {
-        throw Exception('Data pasien tidak ditemukan.');
-      } else if (response.statusCode >= 500) {
-        log('[HOME] GET /patients/${widget.patientId}/show error (${response.statusCode}): ${response.body}');
-        throw Exception(
-          'Terjadi kesalahan pada server. Silakan coba lagi nanti.',
-        );
-      } else {
-        log('[HOME] GET /patients/${widget.patientId}/show unexpected status (${response.statusCode}): ${response.body}');
-        throw Exception(
-          'Gagal memuat data dari server (${response.statusCode})',
-        );
-      }
-    } on SocketException {
-      throw Exception(
-        'Koneksi ke server gagal. Periksa koneksi internet Anda.',
+      await AlarmService.initialize();
+      await AlarmService.handleTreatment(
+        status: data.treatment?.treatmentStatus ?? 'Berjalan',
+        medicationTime: reminderTime.trim(),
+        visits: data.upcomingVisits.map((v) => v.toJson()).toList(),
       );
-    } on TimeoutException {
-      throw Exception('Waktu muat data habis. Silakan coba lagi.');
-    } on FormatException {
-      throw Exception('Format data tidak sesuai. Silakan hubungi admin.');
+
+      _alarmSetupCompleted = true;
+      log('[HOME] Alarm initialized with reminderTime: $reminderTime');
     } catch (e) {
-      throw Exception(e.toString().replaceAll('Exception: ', ''));
+      log('[HOME] Error inisialisasi alarm: $e');
     }
   }
 
-  Future<void> _setupAlarmIfNeeded(Map<String, dynamic> patientData) async {
-    if (_alarmSetupCompleted) {
-      log('Alarm setup already completed, skipping.');
-      return;
-    }
-
-    try {
-      final treatments = patientData['treatments'] as List<dynamic>? ?? [];
-      final currentTreatment = treatments.isNotEmpty ? treatments[0] : null;
-
-      String? medicationTime;
-      final schedule = patientData['medication_schedule'];
-      if (schedule != null &&
-          schedule['reminder_time'] != null &&
-          schedule['reminder_time'].toString().trim().isNotEmpty) {
-        medicationTime = schedule['reminder_time'].toString().trim();
-      } else if (currentTreatment != null &&
-          currentTreatment['medication_time'] != null &&
-          currentTreatment['medication_time'].toString().trim().isNotEmpty) {
-        medicationTime = currentTreatment['medication_time'].toString().trim();
-      }
-
-      if (medicationTime == null) return;
-
-      if (await _isPatientUser()) {
-        await AlarmService.initialize();
-        await AlarmService.handleTreatment(
-          status: currentTreatment?['treatment_status'] ?? 'Berjalan',
-          medicationTime: medicationTime,
-          visits: currentTreatment?['visits'],
-        );
-        _alarmSetupCompleted = true;
-        log('Alarm setup completed successfully with medicationTime: $medicationTime');
-      }
-    } catch (e) {
-      log('Error inisialisasi alarm: $e');
-    }
-  }
-
+  // ===================== UPLOAD BUKTI MINUM OBAT =====================
   Future<void> _uploadImage(File imageFile, String patientTreatmentId) async {
     final uri = Uri.parse('${Connection.BASE_URL}/treatments/proof');
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
+
     if (token == null || token.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sesi telah berakhir. Silakan login kembali.'),
-          ),
+        _showAppSnackBar(
+          'Sesi telah berakhir. Silakan login kembali.',
+          isError: true,
         );
       }
       return;
@@ -316,12 +237,12 @@ class _HomePageState extends State<HomePage> {
 
     if (!await imageFile.exists()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('File gambar bukti tidak ditemukan.')),
-        );
+        _showAppSnackBar('File gambar bukti tidak ditemukan.', isError: true);
       }
       return;
     }
+
+    setState(() => _isUploading = true);
 
     try {
       final request =
@@ -333,7 +254,6 @@ class _HomePageState extends State<HomePage> {
             ..fields['patient_treatment_id'] = patientTreatmentId;
 
       final bytes = await imageFile.readAsBytes();
-
       request.files.add(
         http.MultipartFile.fromBytes(
           'photo',
@@ -346,161 +266,340 @@ class _HomePageState extends State<HomePage> {
       final response = await request.send().timeout(
         const Duration(seconds: 30),
       );
-      final body = await response.stream.bytesToString();
+      final responseBody = await response.stream.bytesToString();
 
-      debugPrint('UPLOAD STATUS: ${response.statusCode}');
-      debugPrint('UPLOAD BODY: $body');
-
-      if (response.statusCode == 201) {
-        await _checkTodayUpload();
+      if (response.statusCode == 201 || response.statusCode == 200) {
         if (mounted) {
-          setState(() {
-            _uploadedToday = true;
-            _isUploading = false;
-            _patientDataFuture = _fetchPatientData();
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Bukti minum obat berhasil diunggah',
-                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
-              ),
-              backgroundColor: const Color(0xFF10B981),
-            ),
+          _showAppSnackBar(
+            'Bukti minum obat berhasil dikonfirmasi & diunggah.',
+            isSuccess: true,
           );
+          await _fetchData(isBackground: false);
         }
       } else if (response.statusCode == 401) {
-        if (mounted) {
-          setState(() {
-            _isUploading = false;
-          });
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _handleUnauthorized();
-          });
-        }
+        _handleUnauthorized();
       } else {
+        log('[HOME] Upload failed (${response.statusCode}): $responseBody');
         if (mounted) {
-          setState(() {
-            _isUploading = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Gagal mengunggah bukti (${response.statusCode})',
-                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
-              ),
-              backgroundColor: Colors.redAccent,
-            ),
+          _showAppSnackBar(
+            'Gagal mengunggah bukti minum obat. Silakan coba lagi.',
+            isError: true,
           );
         }
       }
     } catch (e) {
+      log('[HOME] Upload exception: $e');
       if (mounted) {
-        setState(() {
-          _isUploading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Gagal mengunggah bukti: $e',
-              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
-            ),
-            backgroundColor: Colors.redAccent,
-          ),
+        _showAppSnackBar(
+          'Koneksi terganggu saat mengunggah. Coba lagi.',
+          isError: true,
         );
       }
     } finally {
+      if (mounted) setState(() => _isUploading = false);
       try {
-        if (await imageFile.exists()) {
-          await imageFile.delete();
-        }
-      } catch (e) {
-        log('Gagal menghapus file sementara: $e');
+        if (await imageFile.exists()) await imageFile.delete();
+      } catch (_) {}
+    }
+  }
+
+  void _handleSelectedImage(File imageFile) async {
+    final treatmentId = _currentTreatmentId;
+    if (treatmentId == null) {
+      _showAppSnackBar(
+        'Program pengobatan belum aktif. Hubungi faskes Anda.',
+        isError: true,
+      );
+      return;
+    }
+
+    setState(() => _isUploading = true);
+
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final decodedImage = img.decodeImage(bytes);
+      if (decodedImage == null) {
+        throw Exception('Format gambar tidak didukung.');
+      }
+
+      img.Image resizedImage = decodedImage;
+      if (decodedImage.width > 1080) {
+        resizedImage = img.copyResize(decodedImage, width: 1080);
+      }
+
+      final jpegBytes = img.encodeJpg(resizedImage, quality: 80);
+      final tempDir = await getTemporaryDirectory();
+      final fixedFile = File(
+        '${tempDir.path}/upload_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      await fixedFile.writeAsBytes(jpegBytes);
+
+      await _uploadImage(fixedFile, treatmentId);
+    } catch (e) {
+      if (mounted) {
+        _showAppSnackBar('Gagal memproses gambar: $e', isError: true);
+        setState(() => _isUploading = false);
       }
     }
   }
 
-  // ===================== HOME PAGE =====================
-  Widget _buildHomePage() {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _patientDataFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return _buildLoadingState();
-        }
-
-        if (snapshot.hasError) {
-          final errorMsg = snapshot.error.toString();
-          return _buildErrorState(errorMsg);
-        }
-
-        final patientData = snapshot.data;
-        if (patientData == null || patientData.isEmpty) {
-          return _buildErrorState('Data pasien kosong atau tidak ditemukan.');
-        }
-
-        final treatments = patientData['treatments'] as List<dynamic>? ?? [];
-        final currentTreatment = treatments.isNotEmpty ? treatments[0] : null;
-        final visits = currentTreatment?['visits'] as List<dynamic>? ?? [];
-
-        final rawTreatmentStartDate = patientData['treatment_start_date'];
-        final hasStartDate = rawTreatmentStartDate != null &&
-            rawTreatmentStartDate.toString().trim().isNotEmpty;
-        final hasTreatment = currentTreatment != null || hasStartDate;
-
-        return RefreshIndicator(
-          onRefresh: _refreshHome,
-          color: AppColors.primary,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildGreetingSection(),
-                const SizedBox(height: 24),
-                if (hasTreatment)
-                  _buildTreatmentCard(currentTreatment, patientData)
-                else
-                  _buildEmptyTreatmentCard(),
-                const SizedBox(height: 28),
-                if (currentTreatment != null && visits.isNotEmpty) ...[
-                  _buildUpcomingEvents(visits),
-                  const SizedBox(height: 24),
-                ],
-                _buildFeatureSection(),
-              ],
-            ),
+  void _showAppSnackBar(
+    String message, {
+    bool isSuccess = false,
+    bool isError = false,
+  }) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Colors.white,
           ),
-        );
-      },
+        ),
+        backgroundColor:
+            isSuccess
+                ? const Color(0xFF10B981)
+                : isError
+                ? const Color(0xFFEF4444)
+                : const Color(0xFF1E293B),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
     );
   }
 
-  // ===================== HELPER =====================
-  Widget _buildGreetingSection() {
+  // ===================== UI GREETING HELPER =====================
+  String _getGreetingText() {
+    final hour = DateTime.now().hour;
+    if (hour >= 4 && hour < 11) return 'Selamat pagi,';
+    if (hour >= 11 && hour < 15) return 'Selamat siang,';
+    if (hour >= 15 && hour < 18) return 'Selamat sore,';
+    return 'Selamat malam,';
+  }
+
+  // ===================== BUILD ROOT =====================
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: _selectedIndex == 0 ? _buildAppBar() : null,
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildBerandaTab(),
+          _visitedTabs.contains(1)
+              ? TreatmentPage(patientId: widget.patientId ?? 0)
+              : const SizedBox.shrink(),
+          _visitedTabs.contains(2)
+              ? const ConsultationPage()
+              : const SizedBox.shrink(),
+          _visitedTabs.contains(3)
+              ? const ProfilePage()
+              : const SizedBox.shrink(),
+        ],
+      ),
+      bottomNavigationBar: _buildBottomNav(),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    final unreadCount = _homeData?.unreadNotificationsCount ?? 0;
+
+    return AppBar(
+      title: const Text('TB Care'),
+      actions: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            IconButton(
+              icon: const Icon(
+                Icons.notifications_none_rounded,
+                color: Color(0xFFFFFFFF),
+                size: 24,
+              ),
+              onPressed: _showNotificationSheet,
+              tooltip: 'Notifikasi',
+            ),
+            if (unreadCount > 0)
+              Positioned(
+                top: 10,
+                right: 10,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFEF4444),
+                    shape: BoxShape.circle,
+                  ),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  child: Text(
+                    unreadCount > 9 ? '9+' : '$unreadCount',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+  }
+
+  Widget _buildBottomNav() {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.blue.shade900.withValues(alpha: 0.04),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 16,
-            offset: const Offset(0, 8),
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: NavigationBar(
+        height: 68,
+        backgroundColor: Colors.white,
+        indicatorColor: AppColors.primary.withValues(alpha: 0.12),
+        elevation: 0,
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) {
+          if (mounted) {
+            setState(() {
+              _selectedIndex = index;
+              _visitedTabs.add(index);
+            });
+          }
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded, color: AppColors.primary),
+            label: 'Beranda',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.medication_outlined),
+            selectedIcon: Icon(
+              Icons.medication_rounded,
+              color: AppColors.primary,
+            ),
+            label: 'Pengobatan',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.chat_bubble_outline_rounded),
+            selectedIcon: Icon(
+              Icons.chat_bubble_rounded,
+              color: AppColors.primary,
+            ),
+            label: 'Konsultasi',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline_rounded),
+            selectedIcon: Icon(Icons.person_rounded, color: AppColors.primary),
+            label: 'Profil',
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ===================== BERANDA TAB CONTENT =====================
+  Widget _buildBerandaTab() {
+    // 1. Loading State (ketika belum ada cache dan sedang mengambil data awal)
+    if (_isLoading && _homeData == null) {
+      return _buildSkeletonLoading();
+    }
+
+    // 2. Error State (ketika gagal dan tidak ada data cache yang dapat ditampilkan)
+    if (_error != null && _homeData == null) {
+      return _buildHumanizedErrorState(_error!);
+    }
+
+    final data = _homeData!;
+    final patientName = data.patient?.name ?? widget.name;
+    final puskesmasName = data.patient?.puskesmasName ?? 'Puskesmas';
+
+    return RefreshIndicator(
+      onRefresh: _refreshHome,
+      color: AppColors.primary,
+      backgroundColor: Colors.white,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 36),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // A. Header / Greeting
+            _buildGreetingHeader(patientName),
+            const SizedBox(height: 18),
+
+            // B. Kartu Status Pengobatan
+            _buildTreatmentCard(data.treatment, puskesmasName),
+            const SizedBox(height: 18),
+
+            // C. Pengingat Pengobatan & Unggah Bukti
+            _buildMedicationReminderCard(data.medication, data.treatment),
+            const SizedBox(height: 18),
+
+            // D. Jadwal Kunjungan Puskesmas
+            _buildNextVisitCard(
+              data.nextVisit,
+              puskesmasName,
+              data.upcomingVisits,
+            ),
+            const SizedBox(height: 18),
+
+            // E. Materi Edukasi Terbaru
+            _buildLatestEducationSection(data.education),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===================== SECTION WIDGETS =====================
+
+  /// A. Greeting Section
+  Widget _buildGreetingHeader(String patientName) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
-            width: 56,
-            height: 56,
+            width: 50,
+            height: 50,
             decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.08),
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.primary.withValues(alpha: 0.15),
+                  AppColors.primary.withValues(alpha: 0.05),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
               shape: BoxShape.circle,
             ),
             child: const Center(
@@ -511,28 +610,29 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Selamat Datang,',
+                  _getGreetingText(),
                   style: GoogleFonts.plusJakartaSans(
-                    color: Colors.grey.shade600,
                     fontSize: 13,
+                    color: const Color(0xFF64748B),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  widget.name,
+                  patientName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF0F172A),
+                    letterSpacing: -0.2,
                   ),
                 ),
               ],
@@ -543,107 +643,57 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildTreatmentCard(
-    Map<String, dynamic>? treatment,
-    Map<String, dynamic> patientData,
-  ) {
-    final rawStartDate = patientData['treatment_start_date']?.toString() ??
-        treatment?['start_date']?.toString();
-    final rawEndDate = treatment?['end_date']?.toString();
-
-    final currentDay = _calculateCurrentDay(rawStartDate, rawEndDate);
-    final totalDays = _calculateTotalDays(rawStartDate, rawEndDate);
-
-    double progress = 0.0;
-    if (totalDays > 0) {
-      progress = (currentDay / totalDays).clamp(0.0, 1.0);
-    }
-    final percent = (progress * 100).toInt();
-
-    String? rawMedTime;
-    final schedule = patientData['medication_schedule'];
-    if (schedule != null &&
-        schedule['reminder_time'] != null &&
-        schedule['reminder_time'].toString().trim().isNotEmpty) {
-      rawMedTime = schedule['reminder_time'].toString().trim();
-    } else if (treatment != null &&
-        treatment['medication_time'] != null &&
-        treatment['medication_time'].toString().trim().isNotEmpty) {
-      rawMedTime = treatment['medication_time'].toString().trim();
-    }
-    final medicationTime = rawMedTime != null ? _formatTime(rawMedTime) : null;
-
-    final treatmentStatus = treatment?['treatment_status'] ?? 'Berjalan';
-    final treatmentTypeId = treatment?['treatment_type_id'];
-
-    String formattedDates = '';
-    if (rawStartDate != null && rawStartDate.trim().isNotEmpty) {
-      try {
-        final start = DateTime.parse(rawStartDate);
-        final startStr = DateFormat('d MMMM yyyy', 'id_ID').format(start);
-        if (rawEndDate != null && rawEndDate.trim().isNotEmpty) {
-          final end = DateTime.tryParse(rawEndDate);
-          if (end != null) {
-            final endStr = DateFormat('d MMMM yyyy', 'id_ID').format(end);
-            formattedDates = '$startStr s.d. $endStr';
-          } else {
-            formattedDates = 'Tanggal Mulai Pengobatan: $startStr';
-          }
-        } else {
-          formattedDates = 'Tanggal Mulai Pengobatan: $startStr';
-        }
-      } catch (e) {
-        formattedDates = 'Tanggal Mulai Pengobatan: $rawStartDate';
-      }
-    } else {
-      formattedDates = 'Tanggal mulai pengobatan belum dicatat.';
+  /// B. Status Pengobatan Card
+  Widget _buildTreatmentCard(TreatmentInfo? treatment, String puskesmasName) {
+    if (treatment == null) {
+      return _buildEmptyTreatmentCard();
     }
 
-    final isStatusBerjalan = treatmentStatus == 'Berjalan';
-    final isStatusSelesai = treatmentStatus == 'Selesai';
-
-    final badgeColor =
-        isStatusBerjalan
-            ? const Color(0xFF10B981) // Green
-            : isStatusSelesai
-            ? const Color(0xFF3B82F6) // Blue
-            : const Color(0xFFF59E0B); // Amber/Warning
+    final isBerjalan = treatment.treatmentStatus.toLowerCase() == 'berjalan';
+    final isSelesai = treatment.treatmentStatus.toLowerCase() == 'selesai';
+    final currentDay = treatment.currentDay;
+    final totalDays = treatment.totalDays > 0 ? treatment.totalDays : 180;
+    final percent = treatment.progressPercent.clamp(0, 100);
+    final double progressVal = (percent / 100.0).clamp(0.0, 1.0);
 
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
+        borderRadius: BorderRadius.circular(22),
+        gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            AppColors.primary,
-            Color.lerp(AppColors.primary, Colors.blue.shade800, .4)!,
-          ],
+          colors: [Color(0xFF1E88E5), Color(0xFF0D47A1)],
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: .24),
-            blurRadius: 20,
+            color: const Color(0xFF1E88E5).withValues(alpha: 0.28),
+            blurRadius: 16,
             offset: const Offset(0, 8),
           ),
         ],
       ),
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header Status Badge
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
+              // Judul
               Text(
-                'Pengobatan TB',
+                'Status Pengobatan',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
+                  letterSpacing: -0.2,
                 ),
               ),
+
+              // Status Badge
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -654,7 +704,7 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
+                      color: Colors.black.withValues(alpha: 0.08),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -664,21 +714,31 @@ class _HomePageState extends State<HomePage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isStatusBerjalan
+                      isBerjalan
                           ? Icons.play_circle_fill_rounded
-                          : isStatusSelesai
+                          : isSelesai
                           ? Icons.check_circle_rounded
-                          : Icons.help_rounded,
-                      size: 12,
-                      color: badgeColor,
+                          : Icons.info_rounded,
+                      size: 13,
+                      color:
+                          isBerjalan
+                              ? const Color(0xFF10B981)
+                              : isSelesai
+                              ? const Color(0xFF3B82F6)
+                              : const Color(0xFFF59E0B),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 5),
                     Text(
-                      treatmentStatus,
+                      isBerjalan ? 'Berjalan' : treatment.treatmentStatus,
                       style: GoogleFonts.plusJakartaSans(
-                        color: badgeColor,
                         fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            isBerjalan
+                                ? const Color(0xFF065F46)
+                                : isSelesai
+                                ? const Color(0xFF1E40AF)
+                                : const Color(0xFF92400E),
                       ),
                     ),
                   ],
@@ -686,301 +746,146 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
 
+          // Tipe TB
           Text(
-            treatment != null
-                ? _getTreatmentType(treatmentTypeId).toUpperCase()
-                : 'PROGRAM PENGOBATAN TB',
+            treatment.treatmentTypeName.isNotEmpty
+                ? treatment.treatmentTypeName.toUpperCase()
+                : 'KATEGORI 1 (PASIEN BARU)',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 11,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
               color: Colors.white70,
-              letterSpacing: 1.2,
+              letterSpacing: 1.1,
             ),
           ),
           const SizedBox(height: 6),
 
+          // Hari ke-X dari Y hari
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            textBaseline: TextBaseline.alphabetic,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                treatment != null && rawEndDate != null && rawEndDate.isNotEmpty
-                    ? 'Hari ke-$currentDay dari $totalDays'
-                    : 'Hari ke-$currentDay',
+                'Hari ke-$currentDay',
                 style: GoogleFonts.plusJakartaSans(
-                  fontSize: 22,
+                  fontSize: 24,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
+                  letterSpacing: -0.5,
                 ),
               ),
-              Text(
-                treatment != null && rawEndDate != null && rawEndDate.isNotEmpty
-                    ? '$percent% selesai'
-                    : 'Aktif',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'dari $totalDays hari',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withValues(alpha: 0.9),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '($percent% selesai)',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 12),
 
+          // Progress Bar
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: SizedBox(
-              height: 8,
+              height: 10,
               child: LinearProgressIndicator(
-                value: progress,
-                backgroundColor: Colors.white24,
+                value: progressVal,
+                backgroundColor: Colors.white.withValues(alpha: 0.22),
                 valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
               ),
             ),
           ),
           const SizedBox(height: 14),
 
-          Row(
-            children: [
-              const Icon(
-                Icons.calendar_month_rounded,
-                color: Colors.white70,
-                size: 14,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  formattedDates,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white.withValues(alpha: 0.8),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+          // Periode Tanggal
+          if (treatment.startDate != null)
+            Row(
+              children: [
+                const Icon(
+                  Icons.calendar_month_rounded,
+                  color: Colors.white70,
+                  size: 14,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _formatTreatmentPeriod(
+                      treatment.startDate,
+                      treatment.endDate,
+                    ),
+                    style: GoogleFonts.plusJakartaSans(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-            ],
-          ),
-
-          const Divider(color: Colors.white24, height: 28, thickness: 1),
-
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.notifications_active_rounded,
-                  color: Colors.white,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Pengingat Minum Obat',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white70,
-                        fontSize: 11,
-                      ),
-                    ),
-                    Text(
-                      medicationTime != null && medicationTime != '--:--'
-                          ? 'Setiap hari, $medicationTime WIB'
-                          : 'Jadwal minum obat belum diatur',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          if (treatment != null && _currentTreatmentId != null) ...[
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _isUploading ? null : _showUploadDialog,
-                style: ElevatedButton.styleFrom(
-                  elevation: 0,
-                  backgroundColor: Colors.white,
-                  foregroundColor: AppColors.primary,
-                  disabledBackgroundColor: Colors.white.withValues(alpha: 0.7),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: _buildUploadButtonContent(),
-              ),
+              ],
             ),
-            if (_uploadedToday) ...[
-              const SizedBox(height: 12),
-              Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(
-                      Icons.verified_rounded,
-                      color: Color(0xFF10B981),
-                      size: 14,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      "Bukti hari ini sudah dikirim",
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ] else ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.info_outline_rounded,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      "Menunggu Penetapan Obat & Resep Petugas",
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
-  Widget _buildUploadButtonContent() {
-    if (_isUploading) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            "Mengunggah Bukti...",
-            style: GoogleFonts.plusJakartaSans(
-              color: AppColors.primary,
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-            ),
-          ),
-        ],
-      );
+  String _formatTreatmentPeriod(String? start, String? end) {
+    if (start == null || start.trim().isEmpty) return 'Jadwal belum ditentukan';
+    try {
+      final s = DateTime.parse(start);
+      final sStr = DateFormat('d MMMM yyyy', 'id_ID').format(s);
+      if (end != null && end.trim().isNotEmpty) {
+        final e = DateTime.tryParse(end);
+        if (e != null) {
+          final eStr = DateFormat('d MMMM yyyy', 'id_ID').format(e);
+          return '$sStr s.d. $eStr';
+        }
+      }
+      return 'Mulai: $sStr';
+    } catch (_) {
+      return 'Mulai: $start';
     }
-
-    if (_uploadedToday) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.camera_alt_rounded,
-            color: AppColors.primary,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            "Perbarui Foto Bukti",
-            style: GoogleFonts.plusJakartaSans(
-              color: AppColors.primary,
-              fontWeight: FontWeight.bold,
-              fontSize: 15,
-            ),
-          ),
-        ],
-      );
-    }
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(
-          Icons.check_circle_rounded,
-          color: AppColors.primary,
-          size: 20,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          "Konfirmasi & Unggah Bukti",
-          style: GoogleFonts.plusJakartaSans(
-            color: AppColors.primary,
-            fontWeight: FontWeight.bold,
-            fontSize: 15,
-          ),
-        ),
-      ],
-    );
   }
 
   Widget _buildEmptyTreatmentCard() {
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.grey.shade100, width: 1.5),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
+            color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      padding: const EdgeInsets.all(24),
       child: Column(
         children: [
           Container(
-            width: 64,
-            height: 64,
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: AppColors.primary.withValues(alpha: 0.08),
               shape: BoxShape.circle,
@@ -988,55 +893,26 @@ class _HomePageState extends State<HomePage> {
             child: const Icon(
               Icons.medical_services_outlined,
               color: AppColors.primary,
-              size: 32,
+              size: 28,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text(
-            "Belum Ada Pengobatan",
+            'Belum Ada Program Pengobatan Aktif',
             style: GoogleFonts.plusJakartaSans(
-              color: Colors.grey.shade800,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF1E293B),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
-            "Tanggal mulai pengobatan belum dicatat. Anda belum memiliki program pengobatan TB yang aktif di sistem kami.",
+            'Program pengobatan TB Anda akan muncul di sini setelah didaftarkan oleh petugas Puskesmas.',
             textAlign: TextAlign.center,
             style: GoogleFonts.plusJakartaSans(
-              color: Colors.grey.shade600,
-              fontSize: 13,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF3F8FF),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.info_outline_rounded,
-                  color: AppColors.primary,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    "Silakan hubungi petugas TB di fasilitas kesehatan Anda untuk memulai program.",
-                    style: GoogleFonts.plusJakartaSans(
-                      color: AppColors.primary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
+              fontSize: 12,
+              color: const Color(0xFF64748B),
+              height: 1.4,
             ),
           ),
         ],
@@ -1044,441 +920,1076 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildUpcomingEvents(List<dynamic> visits) {
-    final now = DateTime.now();
-    final todayOnly = DateTime(now.year, now.month, now.day);
+  /// C. Pengingat Pengobatan Card
+  Widget _buildMedicationReminderCard(
+    MedicationInfo? med,
+    TreatmentInfo? treatment,
+  ) {
+    final reminderTime =
+        med?.reminderTime ?? treatment?.medicationTime ?? '20:00';
+    final formattedTime =
+        reminderTime.length >= 5 ? reminderTime.substring(0, 5) : reminderTime;
+    final isTaken = _uploadedToday;
 
-    final List<dynamic> upcomingVisits =
-        visits.where((v) {
-          if (v['visit_date'] == null) return false;
-          final date = DateTime.tryParse(v['visit_date']);
-          if (date == null) return false;
-          final dateOnly = DateTime(date.year, date.month, date.day);
-          return dateOnly.isAfter(todayOnly) ||
-              dateOnly.isAtSameMomentAs(todayOnly);
-        }).toList();
-
-    upcomingVisits.sort((a, b) {
-      final da = DateTime.tryParse(a['visit_date']) ?? DateTime(3000);
-      final db = DateTime.tryParse(b['visit_date']) ?? DateTime(3000);
-      return da.compareTo(db);
-    });
-
-    final displayedVisits = upcomingVisits.take(3).toList();
-
-    if (displayedVisits.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Jadwal Mendatang',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.alarm_on_rounded,
+                  color: Color(0xFF16A34A),
+                  size: 20,
+                ),
               ),
-            ),
-            Text(
-              '${upcomingVisits.length} Jadwal',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.primary,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Column(
-          children:
-              displayedVisits.map((visit) {
-                final visitDateStr = visit['visit_date'];
-                String formattedDate = 'Tanggal tidak tersedia';
-                if (visitDateStr != null) {
-                  try {
-                    formattedDate = DateFormat(
-                      'dd MMMM yyyy',
-                      'id_ID',
-                    ).format(DateTime.parse(visitDateStr));
-                  } catch (e) {
-                    formattedDate = visitDateStr;
-                  }
-                }
-                final time = _formatTime(visit['visit_time']);
-                final status = visit['visit_status'] ?? 'Mendatang';
-
-                Color statusColor = Colors.orange;
-                if (status == 'Selesai') {
-                  statusColor = const Color(0xFF10B981);
-                } else if (status == 'Batal') {
-                  statusColor = Colors.redAccent;
-                }
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.shade100, width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.01),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    leading: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.calendar_today_rounded,
-                        color: AppColors.primary,
-                        size: 20,
-                      ),
-                    ),
-                    title: Text(
-                      'Kunjungan Pengobatan',
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pengingat Pengobatan',
                       style: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.bold,
                         fontSize: 14,
-                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF0F172A),
                       ),
                     ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 4.0),
-                      child: Row(
-                        children: [
-                          Text(
-                            '$formattedDate • $time WIB',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              status,
-                              style: GoogleFonts.plusJakartaSans(
-                                color: statusColor,
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
+                    Text(
+                      'Waktunya minum obat: Hari ini, $formattedTime WIB',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        color: const Color(0xFF64748B),
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                    trailing: Icon(
-                      Icons.chevron_right_rounded,
-                      color: Colors.grey.shade400,
-                    ),
-                    onTap: () => _showEventDetails(visit),
-                  ),
-                );
-              }).toList(),
-        ),
-      ],
-    );
-  }
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
 
-  // Helper methods
-  int _calculateCurrentDay(String? startDate, String? endDate) {
-    if (startDate == null || startDate.trim().isEmpty) return 0;
-
-    try {
-      final start = DateTime.parse(startDate);
-      final now = DateTime.now();
-
-      final startOnly = DateTime(start.year, start.month, start.day);
-      final todayOnly = DateTime(now.year, now.month, now.day);
-
-      if (todayOnly.isBefore(startOnly)) return 0;
-
-      if (endDate != null && endDate.trim().isNotEmpty) {
-        final end = DateTime.tryParse(endDate);
-        if (end != null) {
-          final endOnly = DateTime(end.year, end.month, end.day);
-          if (todayOnly.isAfter(endOnly)) {
-            return endOnly.difference(startOnly).inDays + 1;
-          }
-        }
-      }
-
-      return todayOnly.difference(startOnly).inDays + 1;
-    } catch (e) {
-      return 0;
-    }
-  }
-
-  int _calculateTotalDays(String? startDate, String? endDate) {
-    if (startDate == null || endDate == null || endDate.trim().isEmpty) {
-      return 180; // Standar 6 bulan pengobatan TB
-    }
-
-    try {
-      final start = DateTime.parse(startDate);
-      final end = DateTime.parse(endDate);
-
-      final startOnly = DateTime(start.year, start.month, start.day);
-      final endOnly = DateTime(end.year, end.month, end.day);
-
-      final diff = endOnly.difference(startOnly).inDays + 1;
-      return diff > 0 ? diff : 180;
-    } catch (e) {
-      return 180;
-    }
-  }
-
-  String _getTreatmentType(int? typeId) {
-    switch (typeId) {
-      case 1:
-        return 'TB Aktif';
-      case 2:
-        return 'TB Laten';
-      case 3:
-        return 'TB MDR';
-      default:
-        return 'Jenis TB Tidak Diketahui';
-    }
-  }
-
-  void _showEventDetails(Map<String, dynamic> visit) {
-    final visitDateStr = visit['visit_date'];
-    String formattedDate = 'Tanggal tidak tersedia';
-    if (visitDateStr != null) {
-      try {
-        formattedDate = DateFormat(
-          'EEEE, dd MMMM yyyy',
-          'id_ID',
-        ).format(DateTime.parse(visitDateStr));
-      } catch (e) {
-        formattedDate = visitDateStr;
-      }
-    }
-    final time = _formatTime(visit['visit_time']);
-    final status = visit['visit_status'] ?? 'Status tidak tersedia';
-    final notes = visit['notes'] ?? 'Tidak ada catatan';
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
-            elevation: 8,
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+          // Status & Action
+          if (isTaken)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDCFCE7),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFF86EFAC)),
+              ),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.event_note_rounded,
-                          color: AppColors.primary,
-                          size: 24,
-                        ),
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: Color(0xFF15803D),
+                    size: 20,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Sudah minum obat hari ini',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF15803D),
                       ),
-                      const SizedBox(width: 14),
-                      Text(
-                        'Detail Kunjungan',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade800,
-                        ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _isUploading ? null : _showUploadDialog,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  _buildDetailRow(
-                    Icons.calendar_month_rounded,
-                    'Tanggal',
-                    formattedDate,
-                  ),
-                  const SizedBox(height: 12),
-                  _buildDetailRow(
-                    Icons.access_time_filled_rounded,
-                    'Waktu',
-                    '$time WIB',
-                  ),
-                  const SizedBox(height: 12),
-                  _buildDetailRow(Icons.info_outline_rounded, 'Status', status),
-                  const SizedBox(height: 12),
-                  _buildDetailRow(
-                    Icons.description_rounded,
-                    'Catatan Petugas',
-                    notes,
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: Text(
-                        'Tutup',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                        ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      'Perbarui Bukti',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF166534),
+                        decoration: TextDecoration.underline,
                       ),
                     ),
                   ),
                 ],
               ),
+            )
+          else
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: _isUploading ? null : _showUploadDialog,
+                icon:
+                    _isUploading
+                        ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                        : const Icon(
+                          Icons.check_circle_outline_rounded,
+                          size: 20,
+                        ),
+                label: Text(
+                  _isUploading
+                      ? 'Sedang Mengunggah...'
+                      : 'Tandai Sudah Minum Obat',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
             ),
-          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: Colors.grey.shade400),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  /// D. Jadwal Kunjungan Puskesmas Card
+  Widget _buildNextVisitCard(
+    VisitInfo? nextVisit,
+    String puskesmasName,
+    List<VisitInfo> upcomingVisits,
+  ) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                label,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
-                  color: Colors.grey.shade500,
-                  fontWeight: FontWeight.w500,
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.local_hospital_rounded,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Kunjungan Berikutnya',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+              OutlinedButton(
+                onPressed:
+                    () => _openVisitSchedulePage(puskesmasName, upcomingVisits),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFCBD5E1)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  'Lihat Jadwal',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primary,
+                  ),
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                value,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 13,
-                  color: Colors.grey.shade800,
-                  fontWeight: FontWeight.w600,
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          if (nextVisit != null) ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.event_available_rounded,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        nextVisit.formattedDate,
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF1E293B),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${nextVisit.formattedTime} WIB',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF0284C7),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_outlined,
+                        size: 16,
+                        color: Color(0xFF64748B),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          nextVisit.puskesmasName,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF475569),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (nextVisit.notes != null &&
+                      nextVisit.notes!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Catatan: ${nextVisit.notes}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: const Color(0xFF64748B),
+                        fontStyle: FontStyle.italic,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_today_rounded,
+                    size: 20,
+                    color: Color(0xFF94A3B8),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Belum ada jadwal kunjungan',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Anda belum memiliki jadwal kunjungan berikutnya.',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            color: const Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _openVisitSchedulePage(
+    String puskesmasName,
+    List<VisitInfo> upcomingVisits,
+  ) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder:
+            (_) => VisitSchedulePage(
+              patientId: widget.patientId ?? 0,
+              treatmentId: int.tryParse(_currentTreatmentId ?? '0'),
+              puskesmasName: puskesmasName,
+              initialVisits: upcomingVisits.map((v) => v.toJson()).toList(),
+            ),
+      ),
+    );
+  }
+
+  // ===================== E. MATERI EDUKASI TERBARU =====================
+  /// E. Materi Edukasi Terbaru Section
+  Widget _buildLatestEducationSection(List<EducationItem> educationList) {
+    final items = educationList.take(3).toList();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.menu_book_rounded,
+                      color: Color(0xFF16A34A),
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Materi Edukasi Terbaru',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const EducationPage()),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFCBD5E1)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: Text(
+                  'Lihat Semua',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (items.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.school_outlined,
+                    size: 22,
+                    color: Color(0xFF94A3B8),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Belum ada materi edukasi',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Materi edukasi terbaru seputar pengobatan TB akan ditampilkan di sini.',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            color: const Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                return _buildEducationCard(items[index]);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEducationCard(EducationItem item) {
+    final formattedDate = _formatEducationDate(item.createdAt);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => MateriDetailPage(materialId: item.id),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Thumbnail
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: SizedBox(
+                  width: 80,
+                  height: 80,
+                  child: _buildEducationThumbnail(item),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Content
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildEducationBadge(item.materialType),
+                    const SizedBox(height: 6),
+                    Text(
+                      item.title,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF1E293B),
+                        height: 1.25,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (item.description != null &&
+                        item.description!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        item.description!.trim(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: const Color(0xFF64748B),
+                          height: 1.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    if (formattedDate.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.calendar_today_rounded,
+                            size: 11,
+                            color: Color(0xFF94A3B8),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            formattedDate,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                              color: const Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 
+  Widget _buildEducationThumbnail(EducationItem item) {
+    final lowerType = item.materialType.toLowerCase();
+
+    if (lowerType == 'video') {
+      final thumbUrl = _getYoutubeThumbnail(item.videoUrl);
+      if (thumbUrl != null && thumbUrl.isNotEmpty) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            CachedNetworkImage(
+              imageUrl: thumbUrl,
+              fit: BoxFit.cover,
+              placeholder:
+                  (_, __) => Container(
+                    color: const Color(0xFFE2E8F0),
+                    child: const Center(
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  ),
+              errorWidget:
+                  (_, __, ___) => Container(
+                    color: const Color(0xFFE2E8F0),
+                    child: const Icon(
+                      Icons.video_library_rounded,
+                      color: Color(0xFF94A3B8),
+                      size: 28,
+                    ),
+                  ),
+            ),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+      return Container(
+        color: const Color(0xFFFEE2E2),
+        child: const Center(
+          child: Icon(
+            Icons.play_circle_fill_rounded,
+            color: Color(0xFFDC2626),
+            size: 32,
+          ),
+        ),
+      );
+    }
+
+    final imageUrl = _resolveImageUrl(item.photo);
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: imageUrl,
+        httpHeaders:
+            _token.isNotEmpty ? {'Authorization': 'Bearer $_token'} : null,
+        fit: BoxFit.cover,
+        placeholder:
+            (_, __) => Container(
+              color: const Color(0xFFE2E8F0),
+              child: const Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+        errorWidget: (context, url, error) {
+          debugPrint(
+            '[HomeEducation] Image load error for url: $url, error: $error',
+          );
+          return Container(
+            color: const Color(0xFFE2E8F0),
+            child: const Icon(
+              Icons.broken_image_rounded,
+              color: Color(0xFF94A3B8),
+              size: 28,
+            ),
+          );
+        },
+      );
+    }
+
+    return Container(
+      color: const Color(0xFFF1F5F9),
+      child: Center(
+        child: Icon(
+          lowerType == 'poster' || lowerType == 'image'
+              ? Icons.image_rounded
+              : Icons.menu_book_rounded,
+          color: const Color(0xFF94A3B8),
+          size: 28,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEducationBadge(String type) {
+    final lower = type.toLowerCase();
+    Color bg;
+    Color textColor;
+    IconData icon;
+    String label;
+
+    if (lower == 'video') {
+      bg = const Color(0xFFFEE2E2);
+      textColor = const Color(0xFFDC2626);
+      icon = Icons.play_arrow_rounded;
+      label = 'Video';
+    } else if (lower == 'poster' || lower == 'image' || lower == 'gambar') {
+      bg = const Color(0xFFD1FAE5);
+      textColor = const Color(0xFF059669);
+      icon = Icons.image_rounded;
+      label = lower == 'poster' ? 'Poster' : 'Gambar';
+    } else {
+      bg = const Color(0xFFE0F2FE);
+      textColor = const Color(0xFF0284C7);
+      icon = Icons.article_rounded;
+      label = 'Artikel';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: textColor),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              color: textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String? _getYoutubeThumbnail(String? videoUrl) {
+    if (videoUrl == null || videoUrl.isEmpty) return null;
+    try {
+      final regExp = RegExp(
+        r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})',
+        caseSensitive: false,
+      );
+      final match = regExp.firstMatch(videoUrl);
+      final videoId = match?.group(1);
+      if (videoId != null && videoId.isNotEmpty) {
+        return 'https://img.youtube.com/vi/$videoId/hqdefault.jpg';
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  String? _resolveImageUrl(String? photo) {
+    return Connection.resolveImageUrl(photo);
+  }
+
+  String _formatEducationDate(String? rawDate) {
+    if (rawDate == null || rawDate.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(rawDate);
+      return DateFormat('d MMMM yyyy', 'id_ID').format(dt);
+    } catch (_) {
+      try {
+        final dt = DateFormat('yyyy-MM-dd HH:mm').parse(rawDate);
+        return DateFormat('d MMMM yyyy', 'id_ID').format(dt);
+      } catch (_) {
+        return rawDate;
+      }
+    }
+  }
+
+  // ===================== NOTIFICATION BOTTOM SHEET =====================
+  void _showNotificationSheet() {
+    final notifs = _homeData?.notifications ?? [];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.65,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Notifikasi & Informasi',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFFF1F5F9)),
+              const SizedBox(height: 8),
+
+              Expanded(
+                child:
+                    notifs.isNotEmpty
+                        ? ListView.separated(
+                          itemCount: notifs.length,
+                          separatorBuilder:
+                              (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final n = notifs[index];
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  final lower = n.type.toLowerCase();
+                                  if (lower.contains('edukasi') ||
+                                      lower.contains('education')) {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const EducationPage(),
+                                      ),
+                                    );
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(14),
+                                child: Container(
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: const Color(0xFFE2E8F0),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.primary
+                                                  .withValues(alpha: 0.1),
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                            ),
+                                            child: Text(
+                                              n.type,
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: AppColors.primary,
+                                                  ),
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          if (n.createdAt != null)
+                                            Text(
+                                              n.createdAt!,
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                    fontSize: 11,
+                                                    color: const Color(
+                                                      0xFF94A3B8,
+                                                    ),
+                                                  ),
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        n.title,
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          color: const Color(0xFF1E293B),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        n.message,
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 12,
+                                          color: const Color(0xFF64748B),
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                        : Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.notifications_off_outlined,
+                                size: 40,
+                                color: Color(0xFF94A3B8),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Belum ada notifikasi baru',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF475569),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ===================== UPLOAD DIALOGS =====================
   void _showUploadDialog() {
     showDialog(
       context: context,
       builder:
           (context) => Dialog(
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
+              borderRadius: BorderRadius.circular(24),
             ),
             elevation: 8,
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(22),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 56,
-                    height: 56,
+                    width: 52,
+                    height: 52,
                     decoration: BoxDecoration(
                       color: AppColors.primary.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
-                      Icons.done_all_rounded,
+                      Icons.medication_rounded,
                       color: AppColors.primary,
-                      size: 30,
+                      size: 28,
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 16),
                   Text(
                     'Konfirmasi Minum Obat',
                     style: GoogleFonts.plusJakartaSans(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey.shade800,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF0F172A),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   Text(
-                    'Apakah Anda sudah meminum obat TB Anda hari ini?',
+                    'Apakah Anda sudah meminum obat TB hari ini? Silakan unggah foto sebagai bukti untuk pemantauan petugas.',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
-                      color: Colors.grey.shade600,
+                      color: const Color(0xFF64748B),
                       height: 1.4,
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 22),
                   Row(
                     children: [
                       Expanded(
                         child: TextButton(
                           onPressed: () => Navigator.pop(context),
                           style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                           child: Text(
                             'Nanti',
                             style: GoogleFonts.plusJakartaSans(
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w600,
                               fontSize: 14,
+                              color: const Color(0xFF64748B),
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
@@ -1489,15 +2000,15 @@ class _HomePageState extends State<HomePage> {
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                           ),
                           child: Text(
-                            'Konfirmasi',
+                            'Unggah Foto',
                             style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w700,
                               fontSize: 14,
                             ),
                           ),
@@ -1522,48 +2033,37 @@ class _HomePageState extends State<HomePage> {
           (context) => Container(
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Center(
                   child: Container(
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
+                      color: const Color(0xFFCBD5E1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 Text(
                   'Unggah Bukti Minum Obat',
-                  textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF0F172A),
                   ),
                 ),
-                // const SizedBox(height: 6),
-                // Text(
-                //   'Pilih metode pengambilan foto bukti minum obat',
-                //   textAlign: TextAlign.center,
-                //   style: GoogleFonts.plusJakartaSans(
-                //     fontSize: 12,
-                //     color: Colors.grey.shade500,
-                //   ),
-                // ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 ListTile(
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.08),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -1584,17 +2084,15 @@ class _HomePageState extends State<HomePage> {
                     final XFile? photo = await picker.pickImage(
                       source: ImageSource.camera,
                     );
-                    if (photo != null) {
-                      _handleSelectedImage(File(photo.path));
-                    }
+                    if (photo != null) _handleSelectedImage(File(photo.path));
                   },
                 ),
-                Divider(color: Colors.grey.shade100, height: 1),
+                const Divider(color: Color(0xFFF1F5F9)),
                 ListTile(
                   leading: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.08),
+                      color: AppColors.primary.withValues(alpha: 0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
@@ -1615,238 +2113,103 @@ class _HomePageState extends State<HomePage> {
                     final XFile? image = await picker.pickImage(
                       source: ImageSource.gallery,
                     );
-                    if (image != null) {
-                      _handleSelectedImage(File(image.path));
-                    }
+                    if (image != null) _handleSelectedImage(File(image.path));
                   },
                 ),
-                // Divider(color: Colors.grey.shade100, height: 1),
-                const SizedBox(height: 12),
-                // TextButton(
-                //   onPressed: () {
-                //     Navigator.pop(context);
-                //     ScaffoldMessenger.of(context).showSnackBar(
-                //       SnackBar(
-                //         content: Text(
-                //           'Konfirmasi tanpa foto belum tersedia. Silakan unggah foto sebagai bukti minum obat.',
-                //           style: GoogleFonts.plusJakartaSans(
-                //             fontWeight: FontWeight.w500,
-                //           ),
-                //         ),
-                //         backgroundColor: Colors.orangeAccent,
-                //       ),
-                //     );
-                //   },
-                //   style: TextButton.styleFrom(
-                //     padding: const EdgeInsets.symmetric(vertical: 14),
-                //     shape: RoundedRectangleBorder(
-                //       borderRadius: BorderRadius.circular(14),
-                //     ),
-                //   ),
-                //   child: Text(
-                //     'Tanpa Foto',
-                //     style: GoogleFonts.plusJakartaSans(
-                //       color: Colors.grey.shade600,
-                //       fontWeight: FontWeight.bold,
-                //       fontSize: 14,
-                //     ),
-                //   ),
-                // ),
               ],
             ),
           ),
     );
   }
 
-  // ===================== UPLOAD HANDLER =====================
-  void _handleSelectedImage(File imageFile) async {
-    if (_currentTreatmentId == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Data pengobatan belum siap. Silakan refresh.',
-              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
-            ),
-            backgroundColor: Colors.orangeAccent,
-          ),
-        );
-      }
-      return;
+  // ===================== ERROR & LOADING STATES =====================
+
+  /// Humanized Error State matching Section 5
+  Widget _buildHumanizedErrorState(HomeServiceException err) {
+    IconData errorIcon = Icons.cloud_off_rounded;
+    Color iconColor = const Color(0xFFEF4444);
+    Color bgColor = const Color(0xFFFEF2F2);
+    String buttonText = 'Coba Lagi';
+    VoidCallback onButtonTap = _refreshHome;
+
+    if (err.type == HomeErrorType.timeout) {
+      errorIcon = Icons.timer_outlined;
+      iconColor = const Color(0xFFF59E0B);
+      bgColor = const Color(0xFFFFFBEB);
+      buttonText = 'Coba Lagi';
+      onButtonTap = _refreshHome;
+    } else if (err.type == HomeErrorType.offline) {
+      errorIcon = Icons.wifi_off_rounded;
+      iconColor = const Color(0xFF64748B);
+      bgColor = const Color(0xFFF1F5F9);
+      buttonText = 'Coba Lagi';
+      onButtonTap = _refreshHome;
+    } else if (err.type == HomeErrorType.unauthorized) {
+      errorIcon = Icons.lock_outline_rounded;
+      iconColor = const Color(0xFFEF4444);
+      bgColor = const Color(0xFFFEF2F2);
+      buttonText = 'Masuk Kembali';
+      onButtonTap = _handleUnauthorized;
+    } else if (err.type == HomeErrorType.server) {
+      errorIcon = Icons.dns_rounded;
+      iconColor = const Color(0xFFDC2626);
+      bgColor = const Color(0xFFFEF2F2);
+      buttonText = 'Coba Lagi';
+      onButtonTap = _refreshHome;
     }
 
-    setState(() {
-      _isUploading = true;
-    });
-
-    try {
-      final bytes = await imageFile.readAsBytes();
-      final decodedImage = img.decodeImage(bytes);
-      if (decodedImage == null) {
-        throw Exception('Gagal membaca format gambar.');
-      }
-
-      // Resize image down to max width 1080px to save memory and upload speed
-      img.Image resizedImage = decodedImage;
-      if (decodedImage.width > 1080) {
-        resizedImage = img.copyResize(decodedImage, width: 1080);
-      }
-
-      final jpegBytes = img.encodeJpg(resizedImage, quality: 80);
-      final tempDir = await getTemporaryDirectory();
-
-      final fixedFile = File(
-        '${tempDir.path}/upload_${DateTime.now().millisecondsSinceEpoch}.jpg',
-      );
-
-      await fixedFile.writeAsBytes(jpegBytes);
-      await _uploadImage(fixedFile, _currentTreatmentId!);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Gagal memproses gambar: $e',
-              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w500),
-            ),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUploading = false;
-        });
-      }
-    }
-  }
-
-  Widget _buildFeatureSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Layanan TB Care',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Material(
-          color: const Color(0xFFF3F8FF),
-          borderRadius: BorderRadius.circular(20),
-          elevation: 0,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            splashColor: AppColors.primary.withValues(alpha: .10),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EducationPage()),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: .06),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.menu_book_rounded,
-                      color: AppColors.primary,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Text(
-                      "Informasi & Edukasi TB",
-                      style: GoogleFonts.plusJakartaSans(
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: AppColors.primary.withValues(alpha: 0.7),
-                    size: 24,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildErrorState(String message) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(28),
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.red.shade50,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                Icons.cloud_off_rounded,
-                color: Colors.red.shade400,
-                size: 48,
-              ),
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
+              child: Icon(errorIcon, color: iconColor, size: 48),
             ),
             const SizedBox(height: 20),
             Text(
-              'Data belum dapat dimuat',
+              err.title,
+              textAlign: TextAlign.center,
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF0F172A),
+                letterSpacing: -0.2,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              message,
+              err.message,
               textAlign: TextAlign.center,
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 13,
-                color: Colors.grey.shade500,
-                height: 1.4,
+                color: const Color(0xFF64748B),
+                height: 1.5,
               ),
             ),
             const SizedBox(height: 24),
             SizedBox(
-              width: 160,
               height: 46,
               child: ElevatedButton.icon(
-                onPressed: _refreshHome,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                onPressed: _isRefreshing ? null : onButtonTap,
+                icon:
+                    _isRefreshing
+                        ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                        : const Icon(Icons.refresh_rounded, size: 18),
                 label: Text(
-                  'Coba Lagi',
+                  _isRefreshing ? 'Memuat...' : buttonText,
                   style: GoogleFonts.plusJakartaSans(
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w700,
                     fontSize: 14,
                   ),
                 ),
@@ -1854,6 +2217,7 @@ class _HomePageState extends State<HomePage> {
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -1866,236 +2230,46 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildLoadingState() {
+  /// Modern Skeleton Loader
+  Widget _buildSkeletonLoading() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            height: 96,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 120,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Container(
-                        width: 180,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
+          // Greeting Skeleton
+          _buildShimmerBox(height: 86, borderRadius: 20),
+          const SizedBox(height: 18),
 
-          Container(
-            width: double.infinity,
-            height: 240,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.grey.shade100, width: 1.5),
-            ),
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Container(
-                      width: 140,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                    Container(
-                      width: 60,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Container(
-                  width: 80,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(
-                  width: 200,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  width: double.infinity,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  width: double.infinity,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
+          // Treatment Skeleton
+          _buildShimmerBox(height: 190, borderRadius: 22),
+          const SizedBox(height: 18),
 
-          Container(
-            width: 140,
-            height: 16,
-            decoration: BoxDecoration(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 12),
+          // Reminder Skeleton
+          _buildShimmerBox(height: 110, borderRadius: 20),
+          const SizedBox(height: 18),
 
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Container(
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          // Visit Skeleton
+          _buildShimmerBox(height: 120, borderRadius: 20),
+          const SizedBox(height: 18),
+
+          // Education Skeleton
+          _buildShimmerBox(height: 180, borderRadius: 20),
         ],
       ),
     );
   }
 
-  // ===================== BUILD =====================
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar:
-          _selectedIndex == 0
-              ? AppBar(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                elevation: 0,
-                systemOverlayStyle: SystemUiOverlayStyle.light,
-                title: Text(
-                  'TB Care',
-                  style: GoogleFonts.plusJakartaSans(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 20,
-                  ),
-                ),
-              )
-              : null,
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          _buildHomePage(),
-          TreatmentPage(patientId: widget.patientId ?? 0),
-          const ConsultationPage(),
-          const ProfilePage(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: Colors.white,
-        elevation: 8,
-        shadowColor: Colors.black.withValues(alpha: 0.1),
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          if (mounted) {
-            setState(() => _selectedIndex = index);
-          }
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home, color: AppColors.primary),
-            label: 'Beranda',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.medication_outlined),
-            selectedIcon: Icon(Icons.medication, color: AppColors.primary),
-            label: 'Pengobatan',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.chat_outlined),
-            selectedIcon: Icon(Icons.chat, color: AppColors.primary),
-            label: 'Konsultasi',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person, color: AppColors.primary),
-            label: 'Profil',
-          ),
-        ],
+  Widget _buildShimmerBox({
+    required double height,
+    required double borderRadius,
+  }) {
+    return Container(
+      width: double.infinity,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(borderRadius),
       ),
     );
   }
